@@ -1,0 +1,52 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mcp-bytesmith"
+version = "0.0.1"
+description = "Pure-Python MCP server for encoding, hashing, and crypto-primitives — computed for real, locally."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "GPL-3.0-or-later"
+authors = [{ name = "Laszlo Pere", email = "226979892+laszlopere@users.noreply.github.com" }]
+dependencies = ["mcp>=1.2"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ruff",
+    "mypy",
+    "mcp[cli]",
+    "pycryptodome>=3.20",
+    "xxhash>=3.0",
+    "base58>=2.1",
+    "base45>=0.4",
+    "idna>=3.0",
+]
+# Opt-in toolset extras (per plan.txt L.3). Filled as their tools land.
+ethereum = ["pycryptodome>=3.20"]  # keccak-256; + eth-abi/eth-keys/rlp later
+crypto = []    # cryptography, pyjwt[crypto], bcrypt, argon2-cffi, pyotp
+ids = []       # uuid-utils, python-ulid
+validate = []  # python-stdnum
+encoding = ["xxhash>=3.0", "base58>=2.1", "base45>=0.4", "idna>=3.0"]  # xxh*/fnv fast hashes + base58/base45/idna codecs
+
+[project.scripts]
+mcp-bytesmith = "mcp_bytesmith.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mcp_bytesmith"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[[tool.mypy.overrides]]
+# base45 ships no py.typed marker / stubs (base58, idna, xxhash do).
+module = ["base45"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+# §7.1 — info() is sync; async app introspection uses asyncio.run() inside
+# sync tests, so no pytest-asyncio / asyncio_mode needed (§2.2.3 excluded it).
+testpaths = ["tests"]

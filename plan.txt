@@ -1,0 +1,640 @@
+================================================================================
+mcp-bytesmith — DEVELOPMENT PLAN  (Server B)
+Extracted from mcp-primitives-ideas.txt §1 (ENCODING / HASHING / CRYPTO-PRIMITIVES)
+================================================================================
+
+CONTEXT
+    Deterministic primitives — candidate tool surface. Operations where the
+    model emits a wrong-but-plausible answer (a fake SHA-256, a wrong cron
+    next-fire) and no MCP tool stops it today.
+
+  >> SERVER B = §1  "mcp-bytesmith"  (encoding / hashing / crypto-primitives)
+       Encode, hash, derive, HMAC, JWT, OTP, IDs, check-digits, cert/key
+       inspect. PURE PYTHON STDLIB + opt-in crypto extras (no C++).
+       Wedge is LOCAL/OFFLINE/secrets-never-leave-box.
+       PyPI mcp-bytesmith = free (2026-06-11).
+
+  NOTE: §1 encoding/hashing/crypto -> PURE PYTHON STDLIB. hashlib/base64/hmac/
+        secrets are already thin bindings over the same C (OpenSSL).
+        Re-wrapping in C++ buys nothing + adds a build. Zero compiled artifacts.
+
+
+LEGEND
+    [BUILD]  LLM unreliable AND no/weak MCP coverage  -> core surface
+    [MAYBE]  borderline value; bundle only if cheap
+    [SKIP]   model already does this fine, or already well-covered
+    rel = how reliably the model does it WITHOUT a tool (low = tool adds most value)
+
+
+================================================================================
+1. ENCODING / HASHING / CRYPTO-PRIMITIVES   === SERVER B "mcp-bytesmith" ===
+   (Tier 1 — model CANNOT compute these, only fabricate them. Pure-Python
+    stdlib + opt-in crypto extras, no C++.)
+================================================================================
+    1.1. Hashing & checksums
+        1.1.1. md5 / sha1 / sha224 / sha256 / sha384 / sha512  [BUILD] rel=low
+        1.1.2. SHA-3 family (sha3-256/512, SHAKE128/256)       [BUILD] rel=low
+        1.1.3. BLAKE2b / BLAKE2s / BLAKE3                      [BUILD] rel=low
+        1.1.4. Keccak-256 (pre-NIST variant; Ethereum)        [BUILD] rel=low
+        1.1.5. RIPEMD-160                                      [BUILD] rel=low
+        1.1.6. CRC 8/16/32/32C/64 (selectable polynomial)     [BUILD] rel=low
+        1.1.7. non-crypto fast hashes (xxHash, FNV-1a)        [MAYBE] rel=low
+        1.1.8. file checksum + verify vs expected digest      [BUILD] rel=low
+        1.1.9. multihash (IPFS self-describing digest)        [MAYBE] rel=low
+    1.2. Key derivation (password hashing)
+        1.2.1. bcrypt hash + verify                            [BUILD] rel=low
+        1.2.2. argon2 (i / d / id) hash + verify              [BUILD] rel=low
+        1.2.3. scrypt hash + verify                            [BUILD] rel=low
+        1.2.4. PBKDF2 (selectable PRF + iteration count)      [BUILD] rel=low
+    1.3. Message authentication
+        1.3.1. HMAC (any hash: sha256/sha512/...)             [BUILD] rel=low
+    1.4. Base / byte encodings
+        1.4.1. base64 (std + URL-safe, padding options)       [BUILD] rel=medium
+        1.4.2. base32 (RFC 4648) + base32hex + Crockford      [BUILD] rel=low
+        1.4.3. base16 / hex                                    [BUILD] rel=medium
+        1.4.4. base58 (Bitcoin / IPFS alphabets)              [BUILD] rel=low
+        1.4.5. base58check (version byte + checksum)          [BUILD] rel=low
+        1.4.6. base62                                          [MAYBE] rel=low
+        1.4.7. Ascii85 / base85 / Z85                          [BUILD] rel=low
+        1.4.8. base45 (RFC 9285; QR / health-cert payloads)   [MAYBE] rel=low
+        1.4.9. URL percent-encode/decode                      [BUILD] rel=medium
+        1.4.10. HTML entity encode/decode                     [MAYBE] rel=medium
+        1.4.11. quoted-printable encode/decode                [MAYBE] rel=low
+        1.4.12. MIME encoded-word (=?UTF-8?B?...?=)            [MAYBE] rel=low
+        1.4.13. data: URI build / parse (base64 payload)      [BUILD] rel=medium
+        1.4.14. Punycode / IDNA domain encode/decode          [BUILD] rel=low
+        1.4.15. integer radix convert (hex <-> dec <-> bin/oct,[BUILD] rel=medium
+                big-int, optional byte-width pad)             (RPC hex <-> decimal)
+    1.5. Text, Unicode & byte manipulation
+        1.5.1. string escape/unescape (JSON/JS/Python/C/shell)[BUILD] rel=medium
+        1.5.2. \uXXXX / \xNN unicode-escape <-> text          [BUILD] rel=medium
+        1.5.3. code point <-> char; UTF-8 / UTF-16 byte view  [BUILD] rel=low
+        1.5.4. Unicode normalization (NFC/NFD/NFKC/NFKD)      [BUILD] rel=low
+        1.5.5. hex dump / hexdump <-> bytes                   [BUILD] rel=low
+        1.5.6. charset transcode (latin-1 / cp1252 <-> utf-8) [BUILD] rel=low
+        1.5.7. ROT13 / Caesar shift                           [SKIP]  rel=high
+        1.5.8. byte-field ops: pad (left/right to N bytes),    [BUILD] rel=low
+               trim/strip zeros, slice, concat, size,
+               0x-prefix add/strip   (address <-> 32-byte topic)
+        (Libraries: all stdlib — unicodedata / codecs / binascii; see L.1.6-7,10)
+    1.6. JWT & tokens
+        1.6.1. decode header / payload (no verify)            [BUILD] rel=medium
+        1.6.2. signature verify (HS / RS / ES / EdDSA)        [BUILD] rel=low
+        1.6.3. sign / mint a JWT (given key + claims)         [BUILD] rel=low
+        1.6.4. expiry / nbf / claim inspection                [MAYBE] rel=medium
+        1.6.5. JWK <-> PEM key convert; JWKS lookup by kid    [MAYBE] rel=low
+    1.7. One-time passwords
+        1.7.1. TOTP generate + verify (RFC 6238)             [BUILD] rel=low
+        1.7.2. HOTP generate + verify (RFC 4226)             [BUILD] rel=low
+        1.7.3. otpauth:// URI build / parse                   [MAYBE] rel=low
+    1.8. ID generation
+        1.8.1. UUID v1/v4/v5/v7 generate + parse/inspect      [BUILD] rel=low
+        1.8.2. ULID generate + parse                          [BUILD] rel=low
+        1.8.3. nanoid (custom alphabet / length)              [MAYBE] rel=low
+        1.8.4. Snowflake ID decode (timestamp/worker/seq)     [MAYBE] rel=low
+    1.9. Check digits & validators (deterministic checksums)
+        1.9.1. Luhn (credit card / IMEI) compute + validate   [BUILD] rel=low
+        1.9.2. IBAN (mod-97) validate + check digits          [BUILD] rel=low
+        1.9.3. ISBN-10/13, EAN / UPC / GTIN                    [BUILD] rel=low
+        1.9.4. routing/ABA, VIN, NHS, etc.                    [MAYBE] rel=low
+    1.10. Keys & certificates (inspection — model can't parse PEM/DER)
+        1.10.1. X.509 cert parse (subject/SAN/validity/issuer)[BUILD] rel=low
+        1.10.2. cert / pubkey fingerprint (sha1 / sha256)     [BUILD] rel=low
+        1.10.3. CSR parse                                     [MAYBE] rel=low
+        1.10.4. public/private key inspect (RSA/EC/Ed25519)   [BUILD] rel=low
+        1.10.5. SSH key fingerprint + authorized_keys parse   [BUILD] rel=low
+        1.10.6. key format convert (PEM <-> DER <-> OpenSSH)  [MAYBE] rel=low
+    1.11. Cipher operations (deterministic given key/iv)
+        1.11.1. AES encrypt/decrypt (GCM / CBC / CTR)         [MAYBE] rel=low
+        1.11.2. ChaCha20-Poly1305 encrypt/decrypt            [MAYBE] rel=low
+        1.11.3. RSA / EC sign + verify (given keys)           [MAYBE] rel=low
+        1.11.4. secure random bytes / token / passphrase gen  [BUILD] rel=low
+    1.12. Blockchain-adjacent (hash/encoding primitives only)
+        1.12.1. EIP-55 checksum address encode / verify       [BUILD] rel=low
+        1.12.2. bech32 / bech32m encode / decode              [MAYBE] rel=low
+    1.13. Ethereum/EVM Tier 1 — daily-use core (offline; model can't fake)
+        1.13.1. keccak-256 (Ethereum Keccak, not NIST SHA-3)  [BUILD] rel=low
+        1.13.2. function / event selectors (4-byte + topic0)  [BUILD] rel=low
+        1.13.3. ABI encode / decode (call/return/log)         [BUILD] rel=low
+        1.13.4. wei/gwei/ether + ERC-20 unit conversion       [BUILD] rel=low
+        1.13.5. RLP encode / decode                           [BUILD] rel=low
+        1.13.6. ABI packed encode (abi.encodePacked; tight,    [BUILD] rel=low
+                non-standard — encode-only, not decodable)
+    1.14. Ethereum/EVM Tier 2 — addresses, signatures, transactions
+        1.14.1. CREATE / CREATE2 contract address             [BUILD] rel=low
+        1.14.2. EIP-712 typed-data hash (domain/struct)       [BUILD] rel=low
+        1.14.3. EIP-191 personal_sign message hash            [BUILD] rel=low
+        1.14.4. secp256k1 sign / verify / ecrecover           [BUILD] rel=low
+        1.14.5. signature r/s/v <-> 65-byte <-> EIP-2098      [BUILD] rel=low
+        1.14.6. private key -> public key -> address          [BUILD] rel=low
+        1.14.7. raw tx decode / serialize (1559/4844/...)     [BUILD] rel=low
+    1.15. Ethereum/EVM Tier 3 — wallets, HD derivation, storage layout
+        1.15.1. BIP-39 mnemonic <-> seed                      [MAYBE] rel=low
+        1.15.2. BIP-32/44 HD derivation (m/44'/60'/0'/0/0)    [MAYBE] rel=low
+        1.15.3. keystore enc/dec (Web3 Secret Storage JSON)   [MAYBE] rel=low
+        1.15.4. storage slot (mapping/array per layout)       [BUILD] rel=low
+        1.15.5. ENS namehash (EIP-137) + labelhash            [MAYBE] rel=low
+        1.15.6. bytes32 string encode / decode                [MAYBE] rel=low
+    1.16. Ethereum/EVM reference data (offline lookup tables)
+        1.16.1. chain registry: chainId <-> name <-> native    [BUILD] rel=med
+                currency <-> explorer (bundled static table)
+
+    ------------------------------------------------------------------------
+    LIBRARIES (Python) — ~60% is stdlib (zero deps); rest is ~8 packages.
+    ------------------------------------------------------------------------
+
+    L.1. STDLIB ONLY (no pip install) — covers most of 1.1, 1.3, 1.4
+        L.1.1. hashlib  -> md5/sha1/sha2, sha3/SHAKE, BLAKE2b/2s,
+                           scrypt, pbkdf2_hmac                  (1.1, 1.2.3/4)
+        L.1.2. hmac     -> HMAC                                 (1.3.1)
+        L.1.3. base64   -> base64/32/32hex/16, Ascii85/base85   (1.4.1-3, .7)
+        L.1.4. zlib, binascii -> CRC32 / CRC16                  (1.1.6 partial)
+        L.1.5. urllib.parse / html / quopri / email.header
+                        -> URL-enc / HTML entity / quoted-printable /
+                           MIME encoded-word                    (1.4.9-12)
+        L.1.6. unicodedata -> NFC/NFD/NFKC/NFKD normalization
+        L.1.7. codecs / json / shlex -> string escapes, \uXXXX,
+                           ROT13 (+ basic punycode for 1.4.14)
+        L.1.8. uuid     -> UUID v1/v4/v5 (NOT v7 pre-3.14)      (1.8.1 partial)
+        L.1.9. secrets  -> secure random bytes / tokens         (1.11.4)
+        L.1.10. (hand-rolled, ~10-50 LOC each) data: URI, hexdump,
+                Snowflake decode, FNV-1a, base62, Crockford b32,
+                bech32                                          (1.4.6/13, 1.8.4,
+                                                                 1.12.2)
+
+    L.2. THIRD-PARTY (ranked by leverage = surface covered per dep)
+        L.2.1. cryptography  -> X.509/CSR/SSH parse, fingerprints,
+                                format convert; AES/ChaCha; RSA/EC
+                                sign+verify; JWT crypto backend (1.10, 1.11, 1.6)
+        L.2.2. python-stdnum -> ALL check digits in one dep
+                                (Luhn/IBAN/ISBN/EAN/VIN/...)    (1.9 entire)
+        L.2.3. PyJWT[crypto] (or authlib) -> JWT decode/verify/
+                                sign/JWK                        (1.6)
+        L.2.4. pyotp         -> TOTP/HOTP + otpauth URIs        (1.7)
+        L.2.5. bcrypt + argon2-cffi -> password hashing
+                                (scrypt/PBKDF2 already stdlib)  (1.2.1/2)
+        L.2.6. pycryptodome  -> Keccak-256 + reliable RIPEMD-160(1.1.4/5)
+                * hashlib sha3 = NIST padding, NOT Keccak;
+                  OpenSSL 3 disables hashlib ripemd160. Need this (or pysha3).
+        L.2.7. uuid-utils / python-ulid / nanoid -> UUID v7,
+                                ULID, nanoid                    (1.8.1/2/3)
+        L.2.8. base58 / base45 / idna / blake3 / xxhash /
+               multiformats -> niche encoders + fast hashes
+               + full IDNA2008 + multihash                      (1.4.4/5/8/14,
+                                                                 1.1.3/7/9)
+        L.2.9. eth-abi / eth-account / eth-utils / eth-keys / rlp /
+               pycryptodome -> EIP-55, selectors, ABI, RLP, CREATE2,
+               EIP-712/191, secp256k1 sign/verify/ecrecover, tx decode,
+               HD/keystore, storage slots                       (1.12.1, 1.13)
+                * pure-Python; pycryptodome supplies Keccak (cf L.2.6).
+                  coincurve (C) optional for fast secp256k1; eth-keys has a
+                  slow pure-Python fallback. c-kzg (EIP-4844) = C -> SKIP.
+
+    L.3. PACKAGING -> map to pyproject optional extras (opt-in deps):
+        crypto   = cryptography, pyjwt[crypto], bcrypt, argon2-cffi,
+                   pyotp, pycryptodome
+        ids      = uuid-utils, python-ulid
+        validate = python-stdnum
+        encoding = base58, base45, idna
+        ethereum = eth-abi, eth-account, eth-utils, eth-keys, rlp, pycryptodome
+                   (Tier 1 alone: eth-abi + eth-utils + rlp + pycryptodome)
+        Base install = STDLIB ONLY -> encoding/hashing/unicode toolsets
+        work with zero third-party code. MVP needs only:
+        stdlib + cryptography + pyotp.
+
+
+================================================================================
+SHAPE & MVP
+================================================================================
+
+SB. SERVER B — "mcp-bytesmith" — encoding/hashing/crypto (§1).  Pure-Python
+    stdlib + opt-in crypto extras.
+    SB.1. Shape: gated toolsets encoding | hashing | crypto | ids | validate |
+          ethereum (pyproject extras per L.3). Base install = stdlib only.
+          - cipher ops (1.11) tip toward a full crypto toolkit, not primitives:
+            bigger security surface + dependency weight -> gate carefully/defer.
+          - ethereum (1.13-1.15) is OFFLINE-only: bytesmith computes the bytes,
+            a separate mcp-evm server does node/RPC. Out of scope (needs the
+            network -> belongs in mcp-evm): 4byte selector LOOKUP, ENS
+            resolution, gas price/estimate, chain-state reads (balances/
+            nonces/code/storage values).
+    SB.2. MVP (8 "cannot-fake" tools; stdlib + cryptography + pyotp):
+          SB.2.1. hash md5/sha*            -> 1.1.1
+          SB.2.2. HMAC                     -> 1.3.1
+          SB.2.3. base64 + hex            -> 1.4.1 / 1.4.3
+          SB.2.4. base32                   -> 1.4.2
+          SB.2.5. URL percent-enc/dec      -> 1.4.9
+          SB.2.6. JWT decode + verify      -> 1.6.1 / 1.6.2
+          SB.2.7. UUID / ULID generate     -> 1.8.1 / 1.8.2
+          SB.2.8. TOTP/HOTP                -> 1.7.1 / 1.7.2
+    SB.3. Pitch: "Hashes, HMACs, tokens, and 2FA codes computed for real,
+          LOCALLY — your bytes and keys never leave the machine." (vs ToolPipe
+          SaaS) + actually maintained (vs archived IT-Tools).
+
+SHARED. Reuses mcp-tmux's opt-in toolset-gating pattern + its Trusted-
+        Publishing release workflow. Overarching thesis: "Makes Claude stop
+        emitting wrong-but-plausible answers for the operations it cannot do
+        by hand."
+
+
+================================================================================
+2. MCP SERVER API  (TOOL SURFACE)
+   Concrete MCP tools: names, arguments (req = mandatory, opt = optional w/
+   default), and return shape. Tools are grouped by WHAT THEY DO (the verb),
+   not by which library implements them. Each tool carries a `gate:` tag = the
+   pyproject extra that must be installed for it (see §1 L.3); "-> §1.x" maps
+   back to the source catalogue; "merges:" notes absorbed raw operations.
+================================================================================
+
+    2.0. DESIGN CONVENTIONS  (apply to every tool unless noted)
+        2.0.1. FUNCTION-FIRST GROUPING. The section a tool lives in = its
+               operation (hash / encode / derive / generate / sign / inspect /
+               convert / validate), NOT its dependency. So eth_hash sits with
+               hashing, rlp_codec with encoding, id_generate with generation. One
+               dependency cuts ACROSS groups (the `ethereum` extra lights up
+               tools in §2.1/2.2/2.4/2.6/2.7), which is fine: gating is a tag,
+               not a grouping (§2.0.7). A dual-verb tool is DEFINED once under
+               its primary verb and cross-referenced ("-> see §2.x") elsewhere.
+        2.0.2. MERGE RULE — collapse tools, but only safely. Two operations
+               share ONE tool when their REQUIRED arguments are identical; the
+               difference becomes a discriminator enum + (optional) per-variant
+               `options`. Two merge shapes only:
+                 (a) sibling variants  -> `algorithm` / `scheme` / `style` /
+                     `kind` / `type`   (md5|sha256|crc32; base64|base32|url)
+                 (b) inverse dual-ops  -> `action`
+                     (encode|decode, sign|verify, generate|inspect, build|parse)
+               DO NOT merge unrelated ops into a god-tool: mode-dependent
+               required args defeat FastMCP's auto-schema (it can't say "if
+               action=X then Y required"), so the model misfires.
+               NAMING: a tool that merges encode+decode of a named binary
+               format takes a `_codec` suffix so the NAME advertises both
+               directions (rlp_codec, abi_codec) — the caller need not read the
+               `action` enum to find it. Generic byte codecs keep the plain
+               verb names encode/decode (§2.2.1-2); build/parse tools keep
+               their noun (data_uri, otpauth_uri).
+        2.0.3. Every tool returns a dict (JSON object), never a bare scalar.
+               Self-describing: echo back the algorithm/scheme chosen, byte
+               counts, the canonical form. (Sets the info() precedent.)
+        2.0.4. Binary bridges through text. `*_format` enum =
+               text | hex | base64 says how a string arg maps to raw bytes
+               (input_format default = text/UTF-8) and how bytes render back
+               (output_format default = hex). Lets non-UTF-8 data ride in JSON.
+        2.0.5. Errors vs. soft-invalid. Malformed input / bad key / unknown
+               variant -> raise (FastMCP marks isError). A negative RESULT
+               (failed verify, bad check-digit, expired token, sig mismatch) is
+               NOT an error: return {valid: false, reason: "..."}.
+        2.0.6. Secrets are in-process only. Keys, passwords, private keys, OTP
+               secrets arrive as args, are used, and are NEVER echoed back in
+               full nor logged (wedge = "secrets never leave the box").
+        2.0.7. GATING is per-tool (and sometimes per-variant). `gate:` names
+               the extra a tool needs; `gate: stdlib` = always on. A tool may
+               be stdlib but have variants that need an extra (e.g. hash() is
+               stdlib, but algorithm=keccak256 needs the ethereum extra) —
+               noted inline. info() reports which extras are live, hence which
+               tools/algorithms are callable. §1 L.3 is the dependency map.
+
+    ========================================================================
+    2.1. HASH & MAC  —  produce a fixed digest / tag from data
+    ========================================================================
+        2.1.1. hash(data req, algorithm req, input_format opt=text,
+                    output_format opt=hex, length opt, key opt, seed opt)
+               desc: Compute a cryptographic, CRC, or fast non-crypto digest of bytes.
+               gate: stdlib  (keccak256/ripemd160 -> +ethereum/crypto;
+                              blake3/xxh* -> +encoding extra)
+               merges: hash + crc + fast_hash               -> §1.1.1-7
+               algorithm: md5 sha1 sha224 sha256 sha384 sha512
+                          sha3_256 sha3_512 shake_128 shake_256
+                          blake2b blake2s | crc8 crc16 crc32 crc32c crc64
+                          | xxh32 xxh64 xxh3_64 xxh3_128 fnv1a_32 fnv1a_64
+                          (length req for shake_*; key -> keyed BLAKE2;
+                           seed -> xxh/fnv; CRC/xxh also report `int`)
+               ret: {algorithm, digest, output_format, bits, int?}
+        2.1.2. hash_file(path req, algorithm opt=sha256, expected opt,
+                    output_format opt=hex)                       -> §1.1.8
+               desc: Checksum a file on disk, optionally verifying it against an expected digest.
+               gate: stdlib   (separate: reads the filesystem; soft-verify)
+               ret: {algorithm, digest, path, size, verified?:bool}
+        2.1.3. hmac(data req, key req, algorithm opt=sha256,
+                    input_format opt=text, key_format opt=text,
+                    output_format opt=hex, expected opt)         -> §1.3.1
+               desc: Compute or verify an HMAC authentication tag over data with a secret key.
+               gate: stdlib
+               ret: {algorithm, mac, output_format, valid?:bool}
+        2.1.4. eth_hash(kind req, data req, input_format opt=text,
+                    output_format opt=hex)                 -> §1.13.1, 1.14.2-3
+               desc: Compute an Ethereum hash: raw keccak-256, EIP-191, or EIP-712 typed-data.
+               gate: ethereum
+               merges: keccak256 + eip191 + eip712  (kind)
+               kind: keccak256 | eip191 (personal_sign) | eip712 (typed-data)
+               ret: {kind, hash, domain_separator?, struct_hash?}
+        2.1.5. eth_selector(signature req, kind opt=function)    -> §1.13.2
+               desc: Derive the 4-byte function selector or 32-byte event topic from a signature.
+               gate: ethereum   (keccak of the canonical signature)
+               kind=function -> {selector:'0x........'} | event -> {topic0}
+        2.1.6. eth_address_case(action req, address req)         -> §1.12.1
+               desc: Apply or verify an EIP-55 mixed-case address checksum.
+               gate: ethereum   (keccak-based; action=verify -> see §2.10)
+               action: encode (EIP-55) | verify -> {address, valid?}
+        2.1.7. ens_namehash(name req)                            -> §1.15.5
+               desc: Compute the EIP-137 namehash (and labelhash) of an ENS name.
+               gate: ethereum  [MAYBE — defer]
+               ret: {namehash, labelhash}
+
+    ========================================================================
+    2.2. ENCODE & SERIALIZE  —  reversible representation transforms
+    ========================================================================
+        2.2.1. encode(scheme req, data req, input_format opt=text,
+                    options opt)                       -> §1.4.1-9,14, 1.5.5,
+                                                          1.12.2, 1.15.6
+               desc: Encode bytes/text into a string form (base-N, URL, IDNA,
+                     bech32, hexdump, bytes32-string).
+               gate: stdlib  (base58/base58check/base45/idna -> +encoding extra)
+               merges: base_encode + url_encode + idna + bech32 + hexdump
+               scheme: base16 base32 base32hex base32crockford base45
+                       base58 base58check base62 base64 base64url
+                       ascii85 base85 z85 | url url_form | idna
+                       | bech32 bech32m | hexdump | bytes32
+               options: {alphabet, padding, hrp, width}  (per-scheme; opt)
+               ret: {scheme, encoded}
+        2.2.2. decode(scheme req, data req, output_format opt=text,
+                    options opt)                       -> §1.4.1-9,14, 1.5.5,
+                                                          1.12.2, 1.15.6
+               desc: Decode a base-N/URL/IDNA/bech32/hexdump string back to bytes or text.
+               gate: stdlib  (same per-scheme extras as encode)
+               (inverse of 2.2.1; same scheme set)
+               ret: {scheme, decoded, output_format, hrp?}
+        2.2.3. data_uri(action req, media_type opt, data opt, base64 opt=true,
+                    uri opt)                                     -> §1.4.13
+               desc: Build a data: URI from a payload, or parse one into media type and data.
+               gate: stdlib   (action=parse -> see §2.8 INSPECT)
+               action=build (needs data) -> {uri}
+               action=parse (needs uri)  -> {media_type, parameters, data,
+                                             is_base64}
+        2.2.4. otpauth_uri(action req, type opt=totp, label opt, secret opt,
+                    issuer opt, digits opt, period opt, counter opt,
+                    algorithm opt, uri opt)                       -> §1.7.3
+               desc: Build or parse an otpauth:// provisioning URI.
+               gate: stdlib  [MAYBE]   (a structured-URI codec, like data_uri)
+               action=build -> {uri} | parse (needs uri) -> {type, label, ...}
+        2.2.5. rlp_codec(action req, data req)                   -> §1.13.5
+               desc: RLP-encode or RLP-decode structured data.
+               gate: ethereum
+               action: encode | decode -> {encoded} | {decoded}
+        2.2.6. abi_codec(action req, types req, values opt, data opt,
+                    mode opt=standard)                   -> §1.13.3, 1.13.6
+               desc: ABI-encode values (standard or packed/encodePacked), or
+                     ABI-decode call/return/log data.
+               gate: ethereum
+               mode: standard | packed  (packed valid only with action=encode;
+                     encodePacked is not uniquely decodable)
+               action=encode (needs values) -> {encoded:'0x...', mode}
+               action=decode (needs data)   -> {values:[...]}  (standard only)
+        2.2.7. eth_tx_codec(action req, data opt, fields opt)    -> §1.14.7
+               desc: Encode tx fields into a raw signed transaction, or decode a raw tx
+                     into its fields (legacy / EIP-1559 / 4844).
+               gate: ethereum   (action=decode -> see §2.8 INSPECT)
+               action=encode (fields) -> {raw:'0x...', hash}
+               action=decode (data)   -> {type, fields, hash, from}
+        2.2.8. bytes_edit(action req, data req, length opt, start opt,
+                    end opt, parts opt, side opt=left, fill opt=00) -> §1.5.8
+               desc: Edit a hex byte-buffer: pad/trim to width, slice, concat,
+                     size, or add/strip the 0x prefix (e.g. address -> 32-byte topic).
+               gate: stdlib   (general byte glue; no ethereum dep)
+               merges: pad + trim + slice + concat + size + prefix  (action)
+               action: pad (length/side/fill) | trim (side, strip zeros)
+                       | slice (start/end) | concat (parts:[...])
+                       | size | prefix (add|strip via side)
+               ret: {action, result, size}
+
+    ========================================================================
+    2.3. TEXT & UNICODE  —  text-level transforms, escaping & inspection
+    ========================================================================
+        2.3.1. unicode_normalize(text req, form opt=NFC)          -> §1.5.4
+               desc: Normalize text to a Unicode form (NFC/NFD/NFKC/NFKD).
+               gate: stdlib
+               form: NFC NFD NFKC NFKD
+               ret: {form, result, changed:bool}
+        2.3.2. charset_transcode(text req, from_charset req, to_charset req,
+                    errors opt=strict)                            -> §1.5.6
+               desc: Convert text between character encodings (e.g. latin-1/cp1252 <-> utf-8).
+               gate: stdlib
+               ret: {from_charset, to_charset, result, output_format}
+        2.3.3. string_escape(text req, style req)           -> §1.4.10-12,
+                                                               1.5.1-2
+               desc: Escape text for a source-code or markup context (JSON/JS/C/shell/HTML/...).
+               gate: stdlib   (source/markup escaping, text -> text;
+                               for URL %-escaping use encode scheme=url, §2.2.1)
+               style: json js python c shell html xml backslash
+                      unicode_escape quoted_printable mime_word
+               ret: {style, result}
+        2.3.4. string_unescape(text req, style req)         -> §1.4.10-12,
+                                                               1.5.1-2
+               desc: Reverse a source-code or markup escaping back to the original text.
+               gate: stdlib
+               ret: {style, result}
+        2.3.5. codepoints(text req)                               -> §1.5.3
+               desc: Break text into its code points with names and UTF-8/16/32 byte views.
+               gate: stdlib   (inspection, but Unicode-specific)
+               ret: {count, chars:[{char, codepoint:'U+XXXX', name,
+                     utf8:hex, utf16:hex, utf32:hex}]}
+
+    ========================================================================
+    2.4. DERIVE  —  deterministic derivation of keys / secrets / addresses
+    ========================================================================
+        2.4.1. password_hash(action req, password req, scheme opt, encoded opt,
+                    salt opt, params opt)                        -> §1.2.1-4
+               desc: Hash a password into a verifiable storage string, or check one against it.
+               gate: crypto
+               merges: hash + verify  (dual-op via action)
+               action=hash   (needs scheme) -> {scheme, encoded, params}
+               action=verify (needs encoded)-> {valid:bool, scheme}  (soft)
+               scheme: bcrypt argon2i argon2d argon2id scrypt pbkdf2
+        2.4.2. derive_key(password req, kdf opt=pbkdf2, salt opt, length opt=32,
+                    params opt, output_format opt=hex)           -> §1.2.3-4
+               desc: Derive raw key bytes from a password/secret via a KDF (PBKDF2/scrypt/HKDF).
+               gate: stdlib  (pbkdf2/scrypt stdlib; hkdf hand-rolled on hmac)
+               kdf: pbkdf2 scrypt hkdf
+               ret: {kdf, key, length, params}
+        2.4.3. eth_eoa_address(private_key req)                   -> §1.14.6
+               desc: Derive an EOA's address (and public key) from its private key
+                     — the EOA counterpart to eth_contract_address; creates nothing.
+               gate: ethereum   (secp256k1 mult, then keccak)
+               ret: {address, public_key}   (key NOT echoed; §2.0.6)
+        2.4.4. eth_contract_address(scheme req, deployer req, nonce opt,
+                    salt opt, init_code opt)                      -> §1.14.1
+               desc: Compute a contract's CREATE or CREATE2 deployment address.
+               gate: ethereum
+               scheme: create (needs nonce) | create2 (salt+init_code)
+               ret: {address}
+        2.4.5. eth_storage_slot(layout req, key opt, index opt)   -> §1.15.4
+               desc: Compute the storage slot for a mapping/array entry given a layout.
+               gate: ethereum  [MAYBE — defer]
+        2.4.6. bip39(action req, mnemonic opt, entropy opt, passphrase opt)
+               desc: Generate, validate, or convert a BIP-39 mnemonic to a seed.
+               gate: ethereum  [MAYBE — defer]
+               action: generate | to_seed | validate            -> §1.15.1
+        2.4.7. bip32_derive(seed req, path req)                   -> §1.15.2
+               desc: Derive an HD child key/address from a seed along a BIP-32/44 path.
+               gate: ethereum  [MAYBE — defer]
+
+    ========================================================================
+    2.5. GENERATE  —  produce new random / unique values
+    ========================================================================
+        2.5.1. random(kind opt=urlsafe, length opt, nbytes opt=32,
+                    words opt=6, separator opt='-', wordlist opt,
+                    output_format opt=hex)                       -> §1.11.4
+               desc: Generate cryptographically secure random bytes, a token, or a passphrase.
+               gate: stdlib
+               merges: random_bytes + random_token + passphrase  (kind)
+               kind: bytes (length) | hex | urlsafe | token
+                     | passphrase (words/separator/wordlist)
+               ret: {kind, value, entropy_bits?}
+        2.5.2. id_generate(kind req, count opt=1, version opt, namespace opt,
+                    name opt, alphabet opt, size opt)            -> §1.8.1-3
+               desc: Generate one or more identifiers (UUID/ULID/nanoid).
+               gate: stdlib  (uuid v1/4/5; v7/ulid/nanoid -> +ids extra)
+               merges: uuid-gen + ulid-gen + nanoid  (kind)
+               kind: uuid (version 1/4/5/7; namespace+name for v5)
+                     | ulid | nanoid (alphabet/size)
+               ret: {kind, ids:[...]}
+
+    ========================================================================
+    2.6. SIGN / VERIFY & CODES  —  signatures and authentication codes
+    ========================================================================
+        2.6.1. jwt_sign(claims req, key req, algorithm opt=HS256, headers opt)
+               desc: Mint and sign a JWT from a claims set and a key.
+               gate: crypto                                      -> §1.6.3
+               algorithm: HS256/384/512 RS256/.. ES256/.. EdDSA
+               ret: {token, header, algorithm}
+        2.6.2. pk_sign(action req, algorithm req, key req, data req,
+                    signature opt)                             -> §1.11.3
+               desc: Sign or verify data with an RSA/EC/Ed25519 key.
+               gate: crypto
+               algorithm: rsa-pss rsa-pkcs1 ecdsa ed25519
+               action=sign -> {signature} | verify -> {valid:bool}  (soft)
+        2.6.3. eth_sign(action req, message_hash req, private_key opt,
+                    signature opt, signature_format opt)     -> §1.14.4-5
+               desc: Sign, verify, ecrecover, or reformat a secp256k1 signature over a hash.
+               gate: ethereum
+               merges: secp256k1 sign/verify/recover + signature convert
+               action=sign (key) -> {signature, r, s, v}
+               action=verify     -> {valid:bool}
+               action=recover    -> {address}              (ecrecover)
+               action=convert (signature_format: rsv|packed65|eip2098) ->
+                                  {result}
+        2.6.4. otp(type req, action req, secret req, code opt, counter opt,
+                    digits opt=6, period opt=30, algorithm opt=SHA1,
+                    timestamp opt)                            -> §1.7.1-2
+               desc: Generate or verify a TOTP/HOTP one-time password from a shared secret.
+               gate: crypto   (a code is an HMAC of time/counter -> belongs here,
+                               NOT under "generate")
+               merges: totp + hotp (type) + generate/verify (action)
+               type: totp (period/timestamp) | hotp (counter req)
+               action=generate -> {code, ...} | verify (needs code) ->
+                                  {valid:bool}  (soft)
+
+    ========================================================================
+    2.7. ENCRYPT / DECRYPT  —  confidentiality  [GATED / mostly deferred]
+    ========================================================================
+        2.7.1. cipher(action req, algorithm req, key req, data req,
+                    nonce opt, aad opt, input_format opt=hex)  -> §1.11.1-2
+               desc: Symmetrically encrypt or decrypt data with AES or ChaCha20-Poly1305.
+               gate: crypto  [DEFERRED per SB.1 — bigger security surface]
+               algorithm: aes-gcm aes-cbc aes-ctr chacha20-poly1305
+               action=encrypt -> {ciphertext, nonce, tag?}
+               action=decrypt -> {plaintext}                    (soft on tag)
+        2.7.2. eth_keystore(action req, key opt, password req, json opt)
+               desc: Encrypt a key into, or decrypt it from, a Web3 Secret Storage keystore.
+               gate: ethereum  [MAYBE — defer]                  -> §1.15.3
+               action: encrypt | decrypt
+
+    ========================================================================
+    2.8. INSPECT / PARSE  —  structured blob -> fields
+    ========================================================================
+        2.8.1. pki_inspect(kind req, pem req, password opt,
+                    fingerprint_algorithm opt=sha256)        -> §1.10.1-5
+               desc: Parse an X.509 cert/CSR/key/SSH key into its fields and fingerprints.
+               gate: crypto
+               merges: cert_inspect + cert_fingerprint + key_inspect
+                       + ssh_key + csr_inspect  (kind)
+               kind: certificate | csr | public_key | private_key
+                     | ssh_key | authorized_keys
+               ret: kind-specific fields + fingerprints
+                    (cert: {subject, issuer, serial, not_before, not_after,
+                     san, key_usage, is_ca, fingerprint}; key: {type,
+                     is_private, size_bits, curve?}; ssh_key: {type,
+                     fingerprint_sha256, comment}; authorized_keys: {keys:[]})
+        2.8.2. id_inspect(kind req, value req, epoch opt, layout opt)
+               desc: Parse an identifier (UUID/ULID/Snowflake) into its embedded fields.
+               gate: stdlib  (uuid/snowflake stdlib; ulid -> +ids extra)
+               merges: uuid_inspect + ulid-parse + snowflake_decode -> §1.8.1-2,4
+               kind: uuid | ulid | snowflake (epoch/layout)
+               ret: kind-specific {version, variant, timestamp, node, ...}
+                    | {timestamp, randomness} | {timestamp, worker, seq}
+        2.8.3. jwt_decode(token req, verify opt=false, key opt, algorithms opt,
+                    audience opt, issuer opt, leeway opt=0)  -> §1.6.1-2,4
+               desc: Decode a JWT's header/payload, optionally verifying signature and claims.
+               gate: stdlib for decode; verify=true -> +crypto
+                     (verify side also -> see §2.6 SIGN/VERIFY)
+               ret: {header, payload, signature_valid?, claims_valid?, errors}
+        2.8.4. eth_chain_info(chain_id opt, name opt)            -> §1.16.1
+               desc: Look up an EVM chain's metadata (name, native currency,
+                     explorer) by chain ID or name from a bundled static table.
+               gate: ethereum  [MAYBE]   (offline reference table, not compute)
+               ret: {chain_id, name, native_currency, explorer, rpc?}
+        - data_uri parse   -> defined at §2.2.3
+        - eth_tx_codec decode  -> defined at §2.2.7
+
+    ========================================================================
+    2.9. CONVERT  —  one representation -> another
+    ========================================================================
+        2.9.1. eth_unit(value req, from_unit req, to_unit req,
+                    decimals opt=18)                              -> §1.13.4
+               desc: Convert an amount between wei/gwei/ether and ERC-20 token units.
+               gate: stdlib  (integer math; bundled under ethereum extra)
+               units: wei gwei ether | token(decimals)
+               ret: {result, from_unit, to_unit}
+        2.9.2. key_convert(key req, to req, password opt)       -> §1.10.6
+               desc: Convert a key between PEM, DER, and OpenSSH formats.
+               gate: crypto  [MAYBE]
+               to: pem | der | openssh -> {result, format}
+        2.9.3. jwk_convert(action req, key req, kid opt)         -> §1.6.5
+               desc: Convert a key between PEM and JWK representations.
+               gate: crypto  [MAYBE]
+               action: pem_to_jwk | jwk_to_pem -> {result, kty, kid?}
+        2.9.4. num_convert(value req, from_base req, to_base req,
+                    pad_bytes opt)                                -> §1.4.15
+               desc: Convert a big-integer between bases (hex/dec/bin/oct), e.g.
+                     an RPC 0x value to decimal, with optional byte-width padding.
+               gate: stdlib   (arbitrary-precision int; no eth dep)
+               from_base/to_base: hex | dec | bin | oct
+               ret: {value, from_base, to_base, result}
+
+    ========================================================================
+    2.10. VALIDATE  —  checksum / check-digit verification
+    ========================================================================
+        2.10.1. check_digit(scheme req, value req, action opt=validate) -> §1.9
+                desc: Validate or compute the check digit of a standard number (Luhn/IBAN/ISBN/..).
+                gate: validate
+                scheme: luhn iban isbn10 isbn13 ean upc gtin vin aba nhs ...
+                action=validate -> {scheme, valid:bool, normalized}   (soft)
+                action=compute  -> {scheme, check_digit, full_value}
+        - eth_address_case verify  -> defined at §2.1.6
+
+    ------------------------------------------------------------------------
+    2.11. TOOL-COUNT SUMMARY  (by function, after the §2.0.2 merge)
+    ------------------------------------------------------------------------
+        2.1 hash&mac 7 | 2.2 encode&serialize 8 | 2.3 text&unicode 5
+        | 2.4 derive 7 | 2.5 generate 2 | 2.6 sign/verify 4
+        | 2.7 encrypt 2 | 2.8 inspect 4 | 2.9 convert 4 | 2.10 validate 1
+        = 44 tools (+ info). Dual-verb tools (data_uri, eth_tx_codec, jwt_decode,
+        eth_address_case) are counted once at their primary home.
+        (abi_codec mode=packed and encode/decode scheme=bytes32 add Ethereum
+        coverage without new tools.)
+        Drop [MAYBE/defer] (encrypt 2 + eth Tier-3 5 + otpauth + jwk +
+        key_convert + ens) -> ~30 in a realistic v1. Stdlib-only (gate:stdlib)
+        ~20 tools work with zero third-party deps.
+        Gating is per-tool/per-variant (§2.0.7), so the visible surface scales
+        with installed extras, not with this group layout.
+        MVP (SB.2) maps to: hash, hmac, encode/decode, jwt_decode,
+        id_generate, otp.

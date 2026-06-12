@@ -1,0 +1,503 @@
+================================================================================
+mcp-bytesmith — BOOTSTRAP TODO
+--------------------------------------------------------------------------------
+GOAL: from this empty directory, stand up the skeleton of a pure-Python MCP
+server. When every box below is checked the server starts over stdio, exposes
+exactly ONE tool, and that tool reports the server's availability + version
+information. No domain features yet (encoding/hashing come later).
+
+DONE = `mcp-bytesmith` runs, a client lists one tool, and calling it returns
+       {status: "available", name, version, ...}.
+
+Checkbox legend:  [ ] not started   [~] in progress   [x] done
+================================================================================
+
+
+[x] 1.  PROJECT SCAFFOLDING (src layout)
+    [x] 1.1.  Create the package tree:
+              src/mcp_bytesmith/__init__.py
+              src/mcp_bytesmith/server.py
+              src/mcp_bytesmith/__main__.py
+              tests/test_info.py
+    [x] 1.2.  Add top-level files: README.md, LICENSE (MIT), .gitignore
+              (Python template); this TODO stays at repo root.
+    [x] 1.3.  Version control:
+        [x] 1.3.1.  `git init`; first commit once 1.x + 2.x exist.
+        [x] 1.3.2.  Create a NEW repository for this project on the local
+                    homelab git server (host named "git") — this is the
+                    PRIVATE server, not public.
+        [x] 1.3.3.  Add that repo as the `origin` remote and push the first
+                    commit, e.g.
+                    `git remote add origin git@git:mcp-bytesmith.git`
+                    then `git push -u origin master`.
+        [x] 1.3.4.  Pushing to "git" is a PRIVATE upload to the local server
+                    only — NOT public. (A public GitHub remote for CI is
+                    separate; see section 8.)
+    [x] 1.4.  Distribution name "mcp-bytesmith", import package name
+              "mcp_bytesmith" (underscore). Keep them consistent.
+
+
+[x] 2.  DEPENDENCIES (enumerate now; install via uv)
+    [x] 2.1.  Runtime (required):
+        [x] 2.1.1.  mcp — the official MCP Python SDK; bundles FastMCP.
+                    Import: `from mcp.server.fastmcp import FastMCP`.
+                    Pin a recent floor, e.g. mcp >= 1.2.
+        [x] 2.1.2.  Python >= 3.10 (FastMCP requirement).
+        [x] 2.1.3.  Version read at runtime from package metadata via
+                    importlib.metadata (stdlib) — NO extra dep.
+    [x] 2.2.  Dev / tooling:
+        [x] 2.2.1.  uv — env, dependency resolution, lockfile (matches the
+                    existing mcp-tmux workflow).
+        [x] 2.2.2.  pytest — test runner.
+        [x] 2.2.3.  pytest-asyncio — only if tools are async (add lazily;
+                    FastMCP tools may be plain sync).  [EXCLUDED: info() is sync]
+        [x] 2.2.4.  ruff — lint + format.
+        [x] 2.2.5.  mypy — optional static typing.
+    [x] 2.3.  Build backend: hatchling.
+    [x] 2.4.  FUTURE optional extras — declare empty groups now, fill later;
+              the skeleton's one tool needs NONE of these:
+              crypto   = cryptography, pyjwt[crypto], bcrypt, argon2-cffi, pyotp
+              ids      = uuid-utils, python-ulid
+              validate = python-stdnum
+              encoding = base58, base45, idna
+
+
+[x] 3.  pyproject.toml
+    [x] 3.1.  [build-system] requires = ["hatchling"];
+              build-backend = "hatchling.build".
+    [x] 3.2.  [project]: name="mcp-bytesmith", version="0.0.1",
+              requires-python=">=3.10", dependencies=["mcp>=1.2"],
+              description, readme, license, authors.
+    [x] 3.3.  [project.optional-dependencies]: dev=[pytest, ruff, mypy];
+              plus the empty FUTURE extras from 2.4 as placeholders.
+    [x] 3.4.  [project.scripts]:
+              mcp-bytesmith = "mcp_bytesmith.__main__:main".
+    [x] 3.5.  [tool.hatch.build.targets.wheel]
+              packages = ["src/mcp_bytesmith"].
+    [x] 3.6.  Add ruff config (line length, target-version) under [tool.ruff].
+
+
+[x] 4.  ARCHITECTURE / WIRING
+    [x] 4.1.  server.py: construct the singleton FastMCP app —
+              `mcp = FastMCP("mcp-bytesmith")`. All tools register here.
+    [x] 4.2.  __main__.py: `def main(): mcp.run()` (stdio is default) and the
+              `if __name__ == "__main__": main()` guard. Import the app from
+              server.py so tools register on import.
+    [x] 4.3.  __init__.py: expose `__version__` via
+              importlib.metadata.version("mcp-bytesmith"), with a fallback for
+              the editable/unbuilt case.
+    [x] 4.4.  Transport = stdio (what Claude Code/Desktop launch). No HTTP/SSE
+              in the skeleton.
+    [x] 4.5.  Leave a marked spot in server.py for FUTURE opt-in toolset
+              gating (encoding/hashing/crypto) — comment only, not built.
+
+
+[x] 5.  THE ONE TOOL  (availability + version report)
+    [x] 5.1.  In server.py add a single tool: `@mcp.tool()` on
+              `def info() -> dict: ...`.
+    [x] 5.2.  Return a dict with at least:
+              status   = "available"
+              name     = "mcp-bytesmith"
+              version  = __version__ (from 4.3)
+              python   = platform.python_version()
+              mcp_sdk  = installed mcp SDK version (importlib.metadata)
+              toolsets = []   (placeholder; filled in a later task)
+    [x] 5.3.  One-line docstring + typed return so FastMCP auto-generates the
+              JSON schema (docstring = the tool description).
+    [x] 5.4.  Keep it pure stdlib (platform, importlib.metadata) — no new deps.
+
+
+[x] 6.  RUN & VERIFY
+    [x] 6.1.  `uv sync` (or `uv pip install -e .[dev]`) into a venv.
+    [x] 6.2.  Smoke-run: `uv run mcp-bytesmith` starts and blocks on stdio
+              without error.
+    [x] 6.3.  Inspect with the MCP dev inspector
+              (`uv run mcp dev src/mcp_bytesmith/server.py`); confirm the
+              single `info` tool is listed with its schema. If the inspector
+              is not available on this computer, install it first (it ships
+              with the SDK's CLI extra, e.g. `uv add "mcp[cli]"` / ensure the
+              `mcp` CLI + Node-based Inspector are present), then run it.
+    [x] 6.4.  ON THIS LOCAL COMPUTER: install + register the server at USER
+              scope so it is available in EVERY project (not just this repo) —
+              same model as the existing mcp-kodi / mcp-tmux user-scoped
+              servers.
+        [x] 6.4.1.  Install so the `mcp-bytesmith` entry point is runnable
+                    outside this repo's venv (e.g. `uv tool install .`, or
+                    register the command as `uv run --directory
+                    /home/pipas/projects/mcp-bytesmith mcp-bytesmith`).
+                    [DONE: `uv tool install --editable .` → on PATH at
+                    ~/.local/bin/mcp-bytesmith; editable tracks code edits.]
+        [x] 6.4.2.  Register user-scoped with Claude Code: `claude mcp add
+                    --scope user bytesmith -- <command from 6.4.1>` (or an
+                    equivalent user-scope .mcp.json entry).
+        [x] 6.4.3.  Verify in a DIFFERENT project that the `info` tool is
+                    listed and returns the availability/version payload.
+
+
+[x] 7.  UNIT TESTS (pytest; tests/ directory)
+    [x] 7.1.  Configure pytest under [tool.pytest.ini_options] in
+              pyproject.toml: testpaths=["tests"]; set asyncio mode if
+              pytest-asyncio is used (2.2.3).
+    [x] 7.2.  tests/test_info.py — assert the `info` tool's return payload:
+        [x] 7.2.1.  returns a dict; status == "available".
+        [x] 7.2.2.  name == "mcp-bytesmith".
+        [x] 7.2.3.  version is a non-empty string AND equals
+                    importlib.metadata.version("mcp-bytesmith").
+        [x] 7.2.4.  python and mcp_sdk fields present + non-empty.
+        [x] 7.2.5.  toolsets is a list (empty for now).
+    [x] 7.3.  tests/test_server.py — prove the tool is wired into FastMCP, not
+              merely importable:
+        [x] 7.3.1.  list the app's registered tools; assert EXACTLY ONE is
+                    exposed, named "info".
+        [x] 7.3.2.  that tool has a non-empty description (the docstring) and
+                    a generated input schema.
+        [x] 7.3.3.  invoke it through the app; payload matches 7.2 (end-to-end
+                    via the MCP layer).
+    [x] 7.4.  tests/test_package.py — import / packaging smoke:
+        [x] 7.4.1.  `import mcp_bytesmith` succeeds; `__version__` is defined
+                    and non-empty.
+        [x] 7.4.2.  the editable/unbuilt version fallback (4.3) does not raise.
+    [x] 7.5.  All tests run OFFLINE — no network, no runtime deps beyond `mcp`
+              + stdlib.
+    [x] 7.6.  Once the tests above exist, RUN the suite: `uv run pytest`
+              green (moved here from RUN & VERIFY — run the tests as soon as
+              they are created).
+    [ ] 7.7.  (OPTIONAL) pytest-cov for coverage; not required for the
+              skeleton — add only if useful.
+
+
+[~] 8.  CI (minimal; mirror the mcp-tmux setup)
+    [x] 8.0.  REFERENCE: the mcp-tmux project lives at ../mcp-tmux/ (sibling
+              of this repo). It is a SEPARATE project — treat it as READ-ONLY:
+              read its CI / publish config to copy the pattern, never edit
+              anything under it.
+    [x] 8.1.  .github/workflows/ci.yml: on push/PR — set up uv, `uv sync`,
+              `uv run ruff check`, `uv run pytest`.
+    [x] 8.2.  Pin action versions; run on a current Python (3.12+).
+    [ ] 8.3.  (LATER, not part of skeleton) PyPI publish workflow via Trusted
+              Publishing on git tag — reuse the mcp-tmux pattern.
+
+
+[x] 9.  DEFINITION OF DONE  (acceptance check)
+    [x] 9.1.  `uv run mcp-bytesmith` launches a stdio MCP server with no
+              errors.
+    [x] 9.2.  A client lists EXACTLY ONE tool (`info`).
+    [x] 9.3.  Calling it returns status "available" + correct name + a real
+              version string.
+    [x] 9.4.  `uv run pytest` (section 7) and `uv run ruff check` both pass.
+    [x] 9.5.  Commit the green skeleton; tag-free. Feature work starts after.
+
+
+[~] 10.  HASH & MAC  —  produce a fixed digest / tag from data
+    [x] 10.1.  hash(data req, algorithm req, input_format opt=text,
+               output_format opt=hex, length opt, key opt, seed opt)
+               desc: Compute a cryptographic, CRC, or fast non-crypto digest of bytes.
+               gate: stdlib  (keccak256/ripemd160 -> +ethereum/crypto;
+                              blake3/xxh* -> +encoding extra)
+               merges: hash + crc + fast_hash               -> §1.1.1-7
+               algorithm: md5 sha1 sha224 sha256 sha384 sha512
+                          sha3_256 sha3_512 shake_128 shake_256
+                          blake2b blake2s | crc8 crc16 crc32 crc32c crc64
+                          | xxh32 xxh64 xxh3_64 xxh3_128 fnv1a_32 fnv1a_64
+                          (length req for shake_*; key -> keyed BLAKE2;
+                           seed -> xxh/fnv; CRC/xxh also report `int`)
+               ret: {algorithm, digest, output_format, bits, int?}
+    [ ] 10.2.  hash_file(path req, algorithm opt=sha256, expected opt,
+               output_format opt=hex)                       -> §1.1.8
+               desc: Checksum a file on disk, optionally verifying it against an expected digest.
+               gate: stdlib   (separate: reads the filesystem; soft-verify)
+               ret: {algorithm, digest, path, size, verified?:bool}
+    [ ] 10.3.  hmac(data req, key req, algorithm opt=sha256,
+               input_format opt=text, key_format opt=text,
+               output_format opt=hex, expected opt)         -> §1.3.1
+               desc: Compute or verify an HMAC authentication tag over data with a secret key.
+               gate: stdlib
+               ret: {algorithm, mac, output_format, valid?:bool}
+    [x] 10.4.  eth_hash(kind req, data req, input_format opt=text,
+               output_format opt=hex)                 -> §1.13.1, 1.14.2-3
+               desc: Compute an Ethereum hash: raw keccak-256, EIP-191, or EIP-712 typed-data.
+               gate: ethereum
+               merges: keccak256 + eip191 + eip712  (kind)
+               kind: keccak256 | eip191 (personal_sign) | eip712 (typed-data)
+               ret: {kind, hash, domain_separator?, struct_hash?}
+    [x] 10.5.  eth_selector(signature req, kind opt=function)    -> §1.13.2
+               desc: Derive the 4-byte function selector or 32-byte event topic from a signature.
+               gate: ethereum   (keccak of the canonical signature)
+               kind=function -> {selector:'0x........'} | event -> {topic0}
+    [x] 10.6.  eth_address_case(action req, address req)         -> §1.12.1
+               desc: Apply or verify an EIP-55 mixed-case address checksum.
+               gate: ethereum   (keccak-based; action=verify -> see §2.10)
+               action: encode (EIP-55) | verify -> {address, valid?}
+    [ ] 10.7.  ens_namehash(name req)                            -> §1.15.5
+               desc: Compute the EIP-137 namehash (and labelhash) of an ENS name.
+               gate: ethereum  [MAYBE — defer]
+               ret: {namehash, labelhash}
+
+
+[ ] 11.  ENCODE & SERIALIZE  —  reversible representation transforms
+    [x] 11.1.  encode(scheme req, data req, input_format opt=text,
+               options opt)                       -> §1.4.1-9,14, 1.5.5,
+                                                     1.12.2, 1.15.6
+               desc: Encode bytes/text into a string form (base-N, URL, IDNA,
+                     bech32, hexdump, bytes32-string).
+               gate: stdlib  (base58/base58check/base45/idna -> +encoding extra)
+               merges: base_encode + url_encode + idna + bech32 + hexdump
+               scheme: base16 base32 base32hex base32crockford base45
+                       base58 base58check base62 base64 base64url
+                       ascii85 base85 z85 | url url_form | idna
+                       | bech32 bech32m | hexdump | bytes32
+               options: {alphabet, padding, hrp, width}  (per-scheme; opt)
+               ret: {scheme, encoded}
+    [x] 11.2.  decode(scheme req, data req, output_format opt=text,
+               options opt)                       -> §1.4.1-9,14, 1.5.5,
+                                                     1.12.2, 1.15.6
+               desc: Decode a base-N/URL/IDNA/bech32/hexdump string back to bytes or text.
+               gate: stdlib  (same per-scheme extras as encode)
+               (inverse of 2.2.1; same scheme set)
+               ret: {scheme, decoded, output_format, hrp?}
+    [x] 11.3.  data_uri(action req, media_type opt, data opt, base64 opt=true,
+               uri opt)                                     -> §1.4.13
+               desc: Build a data: URI from a payload, or parse one into media type and data.
+               gate: stdlib   (action=parse -> see §2.8 INSPECT)
+               action=build (needs data) -> {uri}
+               action=parse (needs uri)  -> {media_type, parameters, data,
+                                             is_base64}
+    [ ] 11.4.  otpauth_uri(action req, type opt=totp, label opt, secret opt,
+               issuer opt, digits opt, period opt, counter opt,
+               algorithm opt, uri opt)                       -> §1.7.3
+               desc: Build or parse an otpauth:// provisioning URI.
+               gate: stdlib  [MAYBE]   (a structured-URI codec, like data_uri)
+               action=build -> {uri} | parse (needs uri) -> {type, label, ...}
+    [x] 11.5.  rlp_codec(action req, data req)                   -> §1.13.5
+               desc: RLP-encode or RLP-decode structured data.
+               gate: ethereum
+               action: encode | decode -> {encoded} | {decoded}
+    [x] 11.6.  abi_codec(action req, types req, values opt, data opt,
+               mode opt=standard)                   -> §1.13.3, 1.13.6
+               desc: ABI-encode values (standard or packed/encodePacked), or
+                     ABI-decode call/return/log data.
+               gate: ethereum
+               mode: standard | packed  (packed valid only with action=encode;
+                     encodePacked is not uniquely decodable)
+               action=encode (needs values) -> {encoded:'0x...', mode}
+               action=decode (needs data)   -> {values:[...]}  (standard only)
+    [x] 11.7.  eth_tx_codec(action req, data opt, fields opt)    -> §1.14.7
+               desc: Encode tx fields into a raw signed transaction, or decode a raw tx
+                     into its fields (legacy / EIP-1559 / 4844).
+               gate: ethereum   (action=decode -> see §2.8 INSPECT)
+               action=encode (fields) -> {raw:'0x...', hash}
+               action=decode (data)   -> {type, fields, hash, from}
+    [x] 11.8.  bytes_edit(action req, data req, length opt, start opt,
+               end opt, parts opt, side opt=left, fill opt=00) -> §1.5.8
+               desc: Edit a hex byte-buffer: pad/trim to width, slice, concat,
+                     size, or add/strip the 0x prefix (e.g. address -> 32-byte topic).
+               gate: stdlib   (general byte glue; no ethereum dep)
+               merges: pad + trim + slice + concat + size + prefix  (action)
+               action: pad (length/side/fill) | trim (side, strip zeros)
+                       | slice (start/end) | concat (parts:[...])
+                       | size | prefix (add|strip via side)
+               ret: {action, result, size}
+
+
+[ ] 12.  TEXT & UNICODE  —  text-level transforms, escaping & inspection
+    [x] 12.1.  unicode_normalize(text req, form opt=NFC)          -> §1.5.4
+               desc: Normalize text to a Unicode form (NFC/NFD/NFKC/NFKD).
+               gate: stdlib
+               form: NFC NFD NFKC NFKD
+               ret: {form, result, changed:bool}
+    [x] 12.2.  charset_transcode(text req, from_charset req, to_charset req,
+               errors opt=strict)                            -> §1.5.6
+               desc: Convert text between character encodings (e.g. latin-1/cp1252 <-> utf-8).
+               gate: stdlib
+               ret: {from_charset, to_charset, result, output_format}
+    [x] 12.3.  string_escape(text req, style req)           -> §1.4.10-12,
+                                                               1.5.1-2
+               desc: Escape text for a source-code or markup context (JSON/JS/C/shell/HTML/...).
+               gate: stdlib   (source/markup escaping, text -> text;
+                               for URL %-escaping use encode scheme=url, §2.2.1)
+               style: json js python c shell html xml backslash
+                      unicode_escape quoted_printable mime_word
+               ret: {style, result}
+    [x] 12.4.  string_unescape(text req, style req)         -> §1.4.10-12,
+                                                               1.5.1-2
+               desc: Reverse a source-code or markup escaping back to the original text.
+               gate: stdlib
+               ret: {style, result}
+    [ ] 12.5.  codepoints(text req)                               -> §1.5.3
+               desc: Break text into its code points with names and UTF-8/16/32 byte views.
+               gate: stdlib   (inspection, but Unicode-specific)
+               ret: {count, chars:[{char, codepoint:'U+XXXX', name,
+                     utf8:hex, utf16:hex, utf32:hex}]}
+
+
+[ ] 13.  DERIVE  —  deterministic derivation of keys / secrets / addresses
+    [ ] 13.1.  password_hash(action req, password req, scheme opt, encoded opt,
+               salt opt, params opt)                        -> §1.2.1-4
+               desc: Hash a password into a verifiable storage string, or check one against it.
+               gate: crypto
+               merges: hash + verify  (dual-op via action)
+               action=hash   (needs scheme) -> {scheme, encoded, params}
+               action=verify (needs encoded)-> {valid:bool, scheme}  (soft)
+               scheme: bcrypt argon2i argon2d argon2id scrypt pbkdf2
+    [ ] 13.2.  derive_key(password req, kdf opt=pbkdf2, salt opt, length opt=32,
+               params opt, output_format opt=hex)           -> §1.2.3-4
+               desc: Derive raw key bytes from a password/secret via a KDF (PBKDF2/scrypt/HKDF).
+               gate: stdlib  (pbkdf2/scrypt stdlib; hkdf hand-rolled on hmac)
+               kdf: pbkdf2 scrypt hkdf
+               ret: {kdf, key, length, params}
+    [ ] 13.3.  eth_eoa_address(private_key req)                   -> §1.14.6
+               desc: Derive an EOA's address (and public key) from its private key
+                     — the EOA counterpart to eth_contract_address; creates nothing.
+               gate: ethereum   (secp256k1 mult, then keccak)
+               ret: {address, public_key}   (key NOT echoed; §2.0.6)
+    [ ] 13.4.  eth_contract_address(scheme req, deployer req, nonce opt,
+               salt opt, init_code opt)                      -> §1.14.1
+               desc: Compute a contract's CREATE or CREATE2 deployment address.
+               gate: ethereum
+               scheme: create (needs nonce) | create2 (salt+init_code)
+               ret: {address}
+    [x] 13.5.  eth_storage_slot(layout req, key opt, index opt)   -> §1.15.4
+               desc: Compute the storage slot for a mapping/array entry given a layout.
+               gate: ethereum  [MAYBE — defer]
+    [ ] 13.6.  bip39(action req, mnemonic opt, entropy opt, passphrase opt)
+               desc: Generate, validate, or convert a BIP-39 mnemonic to a seed.
+               gate: ethereum  [MAYBE — defer]
+               action: generate | to_seed | validate            -> §1.15.1
+    [ ] 13.7.  bip32_derive(seed req, path req)                   -> §1.15.2
+               desc: Derive an HD child key/address from a seed along a BIP-32/44 path.
+               gate: ethereum  [MAYBE — defer]
+
+
+[ ] 14.  GENERATE  —  produce new random / unique values
+    [x] 14.1.  random(kind opt=urlsafe, length opt, nbytes opt=32,
+               words opt=6, separator opt='-', wordlist opt,
+               output_format opt=hex)                       -> §1.11.4
+               desc: Generate cryptographically secure random bytes, a token, or a passphrase.
+               gate: stdlib
+               merges: random_bytes + random_token + passphrase  (kind)
+               kind: bytes (length) | hex | urlsafe | token
+                     | passphrase (words/separator/wordlist)
+               ret: {kind, value, entropy_bits?}
+    [ ] 14.2.  id_generate(kind req, count opt=1, version opt, namespace opt,
+               name opt, alphabet opt, size opt)            -> §1.8.1-3
+               desc: Generate one or more identifiers (UUID/ULID/nanoid).
+               gate: stdlib  (uuid v1/4/5; v7/ulid/nanoid -> +ids extra)
+               merges: uuid-gen + ulid-gen + nanoid  (kind)
+               kind: uuid (version 1/4/5/7; namespace+name for v5)
+                     | ulid | nanoid (alphabet/size)
+               ret: {kind, ids:[...]}
+
+
+[ ] 15.  SIGN / VERIFY & CODES  —  signatures and authentication codes
+    [ ] 15.1.  jwt_sign(claims req, key req, algorithm opt=HS256, headers opt)
+               desc: Mint and sign a JWT from a claims set and a key.
+               gate: crypto                                      -> §1.6.3
+               algorithm: HS256/384/512 RS256/.. ES256/.. EdDSA
+               ret: {token, header, algorithm}
+    [ ] 15.2.  pk_sign(action req, algorithm req, key req, data req,
+               signature opt)                             -> §1.11.3
+               desc: Sign or verify data with an RSA/EC/Ed25519 key.
+               gate: crypto
+               algorithm: rsa-pss rsa-pkcs1 ecdsa ed25519
+               action=sign -> {signature} | verify -> {valid:bool}  (soft)
+    [ ] 15.3.  eth_sign(action req, message_hash req, private_key opt,
+               signature opt, signature_format opt)     -> §1.14.4-5
+               desc: Sign, verify, ecrecover, or reformat a secp256k1 signature over a hash.
+               gate: ethereum
+               merges: secp256k1 sign/verify/recover + signature convert
+               action=sign (key) -> {signature, r, s, v}
+               action=verify     -> {valid:bool}
+               action=recover    -> {address}              (ecrecover)
+               action=convert (signature_format: rsv|packed65|eip2098) ->
+                                  {result}
+    [ ] 15.4.  otp(type req, action req, secret req, code opt, counter opt,
+               digits opt=6, period opt=30, algorithm opt=SHA1,
+               timestamp opt)                            -> §1.7.1-2
+               desc: Generate or verify a TOTP/HOTP one-time password from a shared secret.
+               gate: crypto   (a code is an HMAC of time/counter -> belongs here,
+                               NOT under "generate")
+               merges: totp + hotp (type) + generate/verify (action)
+               type: totp (period/timestamp) | hotp (counter req)
+               action=generate -> {code, ...} | verify (needs code) ->
+                                  {valid:bool}  (soft)
+
+
+[ ] 16.  ENCRYPT / DECRYPT  —  confidentiality  [GATED / mostly deferred]
+    [ ] 16.1.  cipher(action req, algorithm req, key req, data req,
+               nonce opt, aad opt, input_format opt=hex)  -> §1.11.1-2
+               desc: Symmetrically encrypt or decrypt data with AES or ChaCha20-Poly1305.
+               gate: crypto  [DEFERRED per SB.1 — bigger security surface]
+               algorithm: aes-gcm aes-cbc aes-ctr chacha20-poly1305
+               action=encrypt -> {ciphertext, nonce, tag?}
+               action=decrypt -> {plaintext}                    (soft on tag)
+    [ ] 16.2.  eth_keystore(action req, key opt, password req, json opt)
+               desc: Encrypt a key into, or decrypt it from, a Web3 Secret Storage keystore.
+               gate: ethereum  [MAYBE — defer]                  -> §1.15.3
+               action: encrypt | decrypt
+
+
+[ ] 17.  INSPECT / PARSE  —  structured blob -> fields
+    [ ] 17.1.  pki_inspect(kind req, pem req, password opt,
+               fingerprint_algorithm opt=sha256)        -> §1.10.1-5
+               desc: Parse an X.509 cert/CSR/key/SSH key into its fields and fingerprints.
+               gate: crypto
+               merges: cert_inspect + cert_fingerprint + key_inspect
+                       + ssh_key + csr_inspect  (kind)
+               kind: certificate | csr | public_key | private_key
+                     | ssh_key | authorized_keys
+               ret: kind-specific fields + fingerprints
+                    (cert: {subject, issuer, serial, not_before, not_after,
+                     san, key_usage, is_ca, fingerprint}; key: {type,
+                     is_private, size_bits, curve?}; ssh_key: {type,
+                     fingerprint_sha256, comment}; authorized_keys: {keys:[]})
+    [ ] 17.2.  id_inspect(kind req, value req, epoch opt, layout opt)
+               desc: Parse an identifier (UUID/ULID/Snowflake) into its embedded fields.
+               gate: stdlib  (uuid/snowflake stdlib; ulid -> +ids extra)
+               merges: uuid_inspect + ulid-parse + snowflake_decode -> §1.8.1-2,4
+               kind: uuid | ulid | snowflake (epoch/layout)
+               ret: kind-specific {version, variant, timestamp, node, ...}
+                    | {timestamp, randomness} | {timestamp, worker, seq}
+    [ ] 17.3.  jwt_decode(token req, verify opt=false, key opt, algorithms opt,
+               audience opt, issuer opt, leeway opt=0)  -> §1.6.1-2,4
+               desc: Decode a JWT's header/payload, optionally verifying signature and claims.
+               gate: stdlib for decode; verify=true -> +crypto
+                     (verify side also -> see §2.6 SIGN/VERIFY)
+               ret: {header, payload, signature_valid?, claims_valid?, errors}
+    [ ] 17.4.  eth_chain_info(chain_id opt, name opt)            -> §1.16.1
+               desc: Look up an EVM chain's metadata (name, native currency,
+                     explorer) by chain ID or name from a bundled static table.
+               gate: ethereum  [MAYBE]   (offline reference table, not compute)
+               ret: {chain_id, name, native_currency, explorer, rpc?}
+
+
+[ ] 18.  CONVERT  —  one representation -> another
+    [ ] 18.1.  eth_unit(value req, from_unit req, to_unit req,
+               decimals opt=18)                              -> §1.13.4
+               desc: Convert an amount between wei/gwei/ether and ERC-20 token units.
+               gate: stdlib  (integer math; bundled under ethereum extra)
+               units: wei gwei ether | token(decimals)
+               ret: {result, from_unit, to_unit}
+    [ ] 18.2.  key_convert(key req, to req, password opt)       -> §1.10.6
+               desc: Convert a key between PEM, DER, and OpenSSH formats.
+               gate: crypto  [MAYBE]
+               to: pem | der | openssh -> {result, format}
+    [ ] 18.3.  jwk_convert(action req, key req, kid opt)         -> §1.6.5
+               desc: Convert a key between PEM and JWK representations.
+               gate: crypto  [MAYBE]
+               action: pem_to_jwk | jwk_to_pem -> {result, kty, kid?}
+    [x] 18.4.  num_convert(value req, from_base req, to_base req,
+               pad_bytes opt)                                -> §1.4.15
+               desc: Convert a big-integer between bases (hex/dec/bin/oct), e.g.
+                     an RPC 0x value to decimal, with optional byte-width padding.
+               gate: stdlib   (arbitrary-precision int; no eth dep)
+               from_base/to_base: hex | dec | bin | oct
+               ret: {value, from_base, to_base, result}
+
+
+[ ] 19.  VALIDATE  —  checksum / check-digit verification
+    [ ] 19.1.  check_digit(scheme req, value req, action opt=validate) -> §1.9
+               desc: Validate or compute the check digit of a standard number (Luhn/IBAN/ISBN/..).
+               gate: validate
+               scheme: luhn iban isbn10 isbn13 ean upc gtin vin aba nhs ...
+               action=validate -> {scheme, valid:bool, normalized}   (soft)
+               action=compute  -> {scheme, check_digit, full_value}
