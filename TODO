@@ -176,6 +176,20 @@ Checkbox legend:  [ ] not started   [~] in progress   [x] done
     [x] 8.2.  Pin action versions; run on a current Python (3.12+).
     [ ] 8.3.  (LATER, not part of skeleton) PyPI publish workflow via Trusted
               Publishing on git tag — reuse the mcp-tmux pattern.
+    [x] 8.4.  Glama listing — add glama.json at repo root to claim ownership and
+              unblock scoring:
+                {"$schema": "https://glama.ai/mcp/schemas/server.json",
+                 "maintainers": ["laszlopere"]}
+              Context (2026-06-12): submitted to glama.ai and listed, but the
+              quality score stays pending — page says "create a release to enable
+              scoring". A GitHub Release (v0.0.1) was published and did NOT trigger
+              it: Glama wants a release created on ITS dashboard (build spec ->
+              deploy -> publish), which needs maintainer access. glama.json is the
+              ownership claim that grants that access, so add it (then trigger the
+              build/release on Glama). mcp-tmux scored without this only because it
+              already had a GitHub Release when Glama first indexed it; bytesmith
+              was indexed before its release existed. See mcp-kodi TODO 11.26 for
+              the same glama.json + the Dockerfile path.
 
 
 [x] 9.  DEFINITION OF DONE  (acceptance check)
