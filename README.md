@@ -1,16 +1,34 @@
 # mcp-bytesmith
 
 A pure-Python [Model Context Protocol](https://modelcontextprotocol.io) server,
-built on the official MCP SDK (FastMCP), exposing byte-wrangling utilities
-(encoding, hashing, IDs, and more — coming later).
+built on the official MCP SDK (FastMCP), exposing a toolbox of byte-wrangling
+utilities — encoding, hashing, number crunching, and Ethereum primitives — all
+computed locally and for real, with no network calls or remote APIs.
 
 Distribution name: `mcp-bytesmith` · import package: `mcp_bytesmith`.
 
-## Status
+## Tools
 
-Bootstrapping the skeleton — see [`TODO`](./TODO). The first milestone is a
-stdio MCP server exposing exactly one tool, `info`, that reports availability
-and version information.
+mcp-bytesmith ships an always-on **core toolset** built entirely on the Python
+standard library, so it works out of the box with no extra dependencies. This
+covers the everyday primitives: `encode` and `decode` move data between a wide
+set of schemes (hex, the Base64/Base32 family, Base58/Base58check, Base45, and
+more), `hash` computes cryptographic, CRC, and fast non-cryptographic digests,
+and `num_convert` translates integers between bases. Rounding out the core are
+`bytes_edit` (pad/trim/slice/concat byte glue), `data_uri` (build and parse
+`data:` URIs), `unicode_normalize` and `charset_transcode` for text and
+character-set work, `string_escape`/`string_unescape` for JSON/JS/Python/C
+escaping, and `random` for CSPRNG-backed bytes, tokens, and passphrases.
+
+An opt-in **Ethereum/EVM toolset** (enabled via the `ethereum` extra) adds the
+primitives you reach for when working on-chain: `eth_hash` for keccak-256,
+EIP-191, and EIP-712 typed-data hashing, `abi_codec` and `rlp_codec` for ABI and
+RLP encode/decode, `eth_selector` for function and event selectors, `eth_tx_codec`
+for transactions, `eth_storage_slot` for storage layout, and `eth_address_case`
+for EIP-55 checksums. An always-available `info` tool reports which toolsets are
+active along with version information.
+
+Further toolsets (crypto, IDs, validation) are on the roadmap — see [`TODO`](./TODO).
 
 ## Development
 
@@ -19,6 +37,19 @@ uv sync                 # create venv + install (incl. dev extras)
 uv run mcp-bytesmith    # start the server over stdio
 uv run pytest           # run the test suite
 ```
+
+## Sponsoring
+
+mcp-bytesmith is free, open-source software developed in my spare time.
+Sponsorships are what keep the project alive and actively maintained — they fund
+new toolsets, bug fixes, and ongoing support, and they're a direct signal that
+the work is worth continuing.
+
+If the project is useful to you, please consider sponsoring it through
+**[GitHub Sponsors](https://github.com/sponsors/laszlopere)**. Click the
+**Sponsor** button at the top of the repository, or visit the link directly, and
+pick a one-time or recurring tier. Every contribution, large or small, is hugely
+appreciated and goes straight back into keeping mcp-bytesmith healthy.
 
 ## License
 
