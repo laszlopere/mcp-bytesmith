@@ -998,8 +998,13 @@ def charset_transcode(
 # quotes) except shell/mime_word, whose delimiters are part of the encoding.
 # NB: URL %-escaping is intentionally absent — use encode(scheme='url'), §2.2.1.
 _ESC_NAMED = {  # backslash sequences shared by every backslashy style
-    "\\": "\\\\", "\n": "\\n", "\r": "\\r", "\t": "\\t",
-    "\b": "\\b", "\f": "\\f", "\v": "\\v",
+    "\\": "\\\\",
+    "\n": "\\n",
+    "\r": "\\r",
+    "\t": "\\t",
+    "\b": "\\b",
+    "\f": "\\f",
+    "\v": "\\v",
 }
 _XML_ENTITIES = {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;"}
 
@@ -1048,18 +1053,29 @@ _ESCAPERS = {
     "html": html.escape,
     "xml": lambda t: "".join(_XML_ENTITIES.get(c, c) for c in t),
     "unicode_escape": lambda t: t.encode("unicode_escape").decode("ascii"),
-    "quoted_printable": lambda t: quopri.encodestring(t.encode("utf-8")).decode("ascii"),
-    "mime_word": lambda t: "=?UTF-8?B?"
-    + base64.b64encode(t.encode("utf-8")).decode("ascii")
-    + "?=",
+    "quoted_printable": lambda t: quopri.encodestring(t.encode("utf-8")).decode(
+        "ascii"
+    ),
+    "mime_word": lambda t: (
+        "=?UTF-8?B?" + base64.b64encode(t.encode("utf-8")).decode("ascii") + "?="
+    ),
 }
 
 
 def string_escape(
     text: str,
     style: Literal[
-        "json", "js", "python", "c", "shell", "html", "xml", "backslash",
-        "unicode_escape", "quoted_printable", "mime_word",
+        "json",
+        "js",
+        "python",
+        "c",
+        "shell",
+        "html",
+        "xml",
+        "backslash",
+        "unicode_escape",
+        "quoted_printable",
+        "mime_word",
     ],
 ) -> dict:
     """Escape text for a source-code or markup context (JSON/JS/C/shell/HTML/...).
@@ -1087,8 +1103,14 @@ def string_escape(
 _HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
 _OCT_DIGITS = frozenset("01234567")
 _UNESC_NAMED = {
-    "n": "\n", "r": "\r", "t": "\t", "b": "\b",
-    "f": "\f", "v": "\v", "a": "\a", "0": "\0",
+    "n": "\n",
+    "r": "\r",
+    "t": "\t",
+    "b": "\b",
+    "f": "\f",
+    "v": "\v",
+    "a": "\a",
+    "0": "\0",
 }
 
 
@@ -1176,10 +1198,19 @@ def _unescape_backslashy(
 _UNESCAPERS = {
     "json": lambda t: json.loads('"' + t + '"'),
     "js": lambda t: _unescape_backslashy(
-        t, named=_named("n", "r", "t", "b", "f", "v", "0"), hex2=True, u4=True, u_brace=True
+        t,
+        named=_named("n", "r", "t", "b", "f", "v", "0"),
+        hex2=True,
+        u4=True,
+        u_brace=True,
     ),
     "python": lambda t: _unescape_backslashy(
-        t, named=_named("n", "r", "t", "b", "f", "v", "a"), hex2=True, octal=True, u4=True, u8=True
+        t,
+        named=_named("n", "r", "t", "b", "f", "v", "a"),
+        hex2=True,
+        octal=True,
+        u4=True,
+        u8=True,
     ),
     "c": lambda t: _unescape_backslashy(
         t, named=_named("n", "r", "t", "b", "f", "v", "a"), octal=True, hex_greedy=True
@@ -1193,7 +1224,9 @@ _UNESCAPERS = {
     "html": html.unescape,
     "xml": html.unescape,  # superset: handles &apos; and numeric refs too
     "unicode_escape": lambda t: t.encode("ascii").decode("unicode_escape"),
-    "quoted_printable": lambda t: quopri.decodestring(t.encode("ascii")).decode("utf-8"),
+    "quoted_printable": lambda t: quopri.decodestring(t.encode("ascii")).decode(
+        "utf-8"
+    ),
     "mime_word": lambda t: str(make_header(decode_header(t))),
 }
 
@@ -1201,8 +1234,17 @@ _UNESCAPERS = {
 def string_unescape(
     text: str,
     style: Literal[
-        "json", "js", "python", "c", "shell", "html", "xml", "backslash",
-        "unicode_escape", "quoted_printable", "mime_word",
+        "json",
+        "js",
+        "python",
+        "c",
+        "shell",
+        "html",
+        "xml",
+        "backslash",
+        "unicode_escape",
+        "quoted_printable",
+        "mime_word",
     ],
 ) -> dict:
     """Reverse a source-code or markup escaping back to the original text.
@@ -1234,7 +1276,9 @@ def _eff_wordlist() -> tuple[str, ...]:
     """Load (and cache) the bundled EFF large wordlist as one word per line."""
     global _EFF_WORDLIST
     if _EFF_WORDLIST is None:
-        text = (files("mcp_bytesmith") / "wordlists" / "eff_large.txt").read_text("utf-8")
+        text = (files("mcp_bytesmith") / "wordlists" / "eff_large.txt").read_text(
+            "utf-8"
+        )
         _EFF_WORDLIST = tuple(w for w in text.split() if w)
     return _EFF_WORDLIST
 

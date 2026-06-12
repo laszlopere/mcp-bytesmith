@@ -181,7 +181,9 @@ def test_4844_type_inferred_and_round_trips():
     assert out["type"] == 3
     assert out["fields"]["blobVersionedHashes"] == ["0x01" + "cd" * 31]
     assert out["fields"]["maxFeePerBlobGas"] == str(0x3B9ACA00)
-    assert eth_tx_codec("encode", fields={**out["fields"], "type": 3})["raw"] == enc["raw"]
+    assert (
+        eth_tx_codec("encode", fields={**out["fields"], "type": 3})["raw"] == enc["raw"]
+    )
 
 
 # --- contract creation: empty `to` becomes null --------------------------------
@@ -205,38 +207,80 @@ def test_contract_creation_empty_to_is_null():
 
 # --- type inference ------------------------------------------------------------
 def test_type_inference():
-    base = {"nonce": 1, "gasLimit": 21000, "to": "0x" + "00" * 20, "value": 1,
-            "data": "0x", "r": "0x" + "01" * 32, "s": "0x" + "02" * 32}
+    base = {
+        "nonce": 1,
+        "gasLimit": 21000,
+        "to": "0x" + "00" * 20,
+        "value": 1,
+        "data": "0x",
+        "r": "0x" + "01" * 32,
+        "s": "0x" + "02" * 32,
+    }
     assert eth_tx_codec("encode", fields={**base, "gasPrice": 1, "v": 27})["type"] == 0
-    assert eth_tx_codec(
-        "encode", fields={**base, "gasPrice": 1, "accessList": [], "yParity": 0}
-    )["type"] == 1
-    assert eth_tx_codec(
-        "encode",
-        fields={**base, "maxFeePerGas": 1, "chainId": 1, "accessList": [], "yParity": 0},
-    )["type"] == 2
+    assert (
+        eth_tx_codec(
+            "encode", fields={**base, "gasPrice": 1, "accessList": [], "yParity": 0}
+        )["type"]
+        == 1
+    )
+    assert (
+        eth_tx_codec(
+            "encode",
+            fields={
+                **base,
+                "maxFeePerGas": 1,
+                "chainId": 1,
+                "accessList": [],
+                "yParity": 0,
+            },
+        )["type"]
+        == 2
+    )
 
 
 def test_explicit_type_overrides_inference():
     # maxFeePerGas present but type forced to legacy serialization is honored.
     out = eth_tx_codec(
         "encode",
-        fields={"type": 0, "nonce": 0, "gasPrice": 1, "gasLimit": 21000,
-                "to": "0x" + "00" * 20, "value": 0, "data": "0x",
-                "v": 27, "r": "0x" + "01" * 32, "s": "0x" + "02" * 32},
+        fields={
+            "type": 0,
+            "nonce": 0,
+            "gasPrice": 1,
+            "gasLimit": 21000,
+            "to": "0x" + "00" * 20,
+            "value": 0,
+            "data": "0x",
+            "v": 27,
+            "r": "0x" + "01" * 32,
+            "s": "0x" + "02" * 32,
+        },
     )
     assert out["type"] == 0
 
 
 # --- unsigned signature -> no sender -------------------------------------------
 def test_zero_signature_has_no_sender():
-    fields = {"type": 2, "chainId": 1, "nonce": 0, "maxPriorityFeePerGas": 1,
-              "maxFeePerGas": 100, "gasLimit": 21000, "to": "0x" + "00" * 20,
-              "value": 0, "data": "0x", "accessList": [], "yParity": 0,
-              "r": 0, "s": 0}
-    assert eth_tx_codec("decode", data=eth_tx_codec("encode", fields=fields)["raw"])[
-        "from"
-    ] is None
+    fields = {
+        "type": 2,
+        "chainId": 1,
+        "nonce": 0,
+        "maxPriorityFeePerGas": 1,
+        "maxFeePerGas": 100,
+        "gasLimit": 21000,
+        "to": "0x" + "00" * 20,
+        "value": 0,
+        "data": "0x",
+        "accessList": [],
+        "yParity": 0,
+        "r": 0,
+        "s": 0,
+    }
+    assert (
+        eth_tx_codec("decode", data=eth_tx_codec("encode", fields=fields)["raw"])[
+            "from"
+        ]
+        is None
+    )
 
 
 # --- error paths ---------------------------------------------------------------
@@ -289,7 +333,9 @@ def test_registered_and_callable_through_app():
     assert "eth_tx_codec" in names
 
     async def go():
-        return await mcp.call_tool("eth_tx_codec", {"action": "decode", "data": LEGACY_RAW})
+        return await mcp.call_tool(
+            "eth_tx_codec", {"action": "decode", "data": LEGACY_RAW}
+        )
 
     result = asyncio.run(go())
     contents = result[0] if isinstance(result, tuple) else result

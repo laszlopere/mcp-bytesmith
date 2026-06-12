@@ -110,9 +110,7 @@ def test_registered_with_form_enum():
 
 def test_callable_through_app():
     async def go():
-        return await mcp.call_tool(
-            "unicode_normalize", {"text": NFD_E, "form": "NFC"}
-        )
+        return await mcp.call_tool("unicode_normalize", {"text": NFD_E, "form": "NFC"})
 
     result = asyncio.run(go())
     contents = result[0] if isinstance(result, tuple) else result

@@ -31,8 +31,17 @@ from mcp_bytesmith.core import string_unescape as SU  # noqa: E402
 from mcp_bytesmith.server import mcp  # noqa: E402
 
 ALL_STYLES = [
-    "json", "js", "python", "c", "shell", "html", "xml", "backslash",
-    "unicode_escape", "quoted_printable", "mime_word",
+    "json",
+    "js",
+    "python",
+    "c",
+    "shell",
+    "html",
+    "xml",
+    "backslash",
+    "unicode_escape",
+    "quoted_printable",
+    "mime_word",
 ]
 
 
@@ -134,7 +143,7 @@ def test_trailing_backslash_kept_literal():
         "controls \t \n \r \x00 \x07 \x7f",
         "unicode café ☃ é ﬁ",
         "back\\slash and \\n literal",
-        "<a href=\"x\">&'</a>",
+        '<a href="x">&\'</a>',
     ],
 )
 def test_round_trip(style, sample):

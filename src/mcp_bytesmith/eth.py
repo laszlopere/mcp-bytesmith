@@ -585,9 +585,7 @@ def _abi_dec(t: str, data: bytes, pos: int) -> Any:
             # data, so a length exceeding that word count is malformed — reject it
             # before allocating, rather than OOMing on an untrusted length word.
             if length > max(0, len(data) - pos - 32) // 32:
-                raise ValueError(
-                    f"ABI array length {length} exceeds available data"
-                )
+                raise ValueError(f"ABI array length {length} exceeds available data")
             return _abi_dec_tuple([base] * length, data, pos + 32)
         return _abi_dec_tuple([base] * int(inner), data, pos)
     if _is_tuple(t):
@@ -808,13 +806,49 @@ def _ecrecover(z: int, r: int, s: int, rec_id: int) -> bytes:
 # and recovers `from` via the signing hash + ecrecover.
 _TX_SIGNED_FIELDS: dict[int, list[str]] = {
     0: ["nonce", "gasPrice", "gasLimit", "to", "value", "data", "v", "r", "s"],
-    1: ["chainId", "nonce", "gasPrice", "gasLimit", "to", "value", "data",
-        "accessList", "yParity", "r", "s"],
-    2: ["chainId", "nonce", "maxPriorityFeePerGas", "maxFeePerGas", "gasLimit",
-        "to", "value", "data", "accessList", "yParity", "r", "s"],
-    3: ["chainId", "nonce", "maxPriorityFeePerGas", "maxFeePerGas", "gasLimit",
-        "to", "value", "data", "accessList", "maxFeePerBlobGas",
-        "blobVersionedHashes", "yParity", "r", "s"],
+    1: [
+        "chainId",
+        "nonce",
+        "gasPrice",
+        "gasLimit",
+        "to",
+        "value",
+        "data",
+        "accessList",
+        "yParity",
+        "r",
+        "s",
+    ],
+    2: [
+        "chainId",
+        "nonce",
+        "maxPriorityFeePerGas",
+        "maxFeePerGas",
+        "gasLimit",
+        "to",
+        "value",
+        "data",
+        "accessList",
+        "yParity",
+        "r",
+        "s",
+    ],
+    3: [
+        "chainId",
+        "nonce",
+        "maxPriorityFeePerGas",
+        "maxFeePerGas",
+        "gasLimit",
+        "to",
+        "value",
+        "data",
+        "accessList",
+        "maxFeePerBlobGas",
+        "blobVersionedHashes",
+        "yParity",
+        "r",
+        "s",
+    ],
 }
 
 
@@ -963,7 +997,9 @@ def _tx_decode(data: str) -> dict:
         if r_int and s_int:  # a zeroed signature means the tx is unsigned
             try:
                 from_addr = _eip55(
-                    _ecrecover(int.from_bytes(sighash, "big"), r_int, s_int, rec_id).hex()
+                    _ecrecover(
+                        int.from_bytes(sighash, "big"), r_int, s_int, rec_id
+                    ).hex()
                 )
             except ValueError:
                 from_addr = None

@@ -76,7 +76,7 @@ def test_backslash_doubles_existing_backslash():
 
 # --- entity styles -------------------------------------------------------------
 def test_html_escapes_markup_and_quotes():
-    assert r("<a href=\"x\">&'", "html") == "&lt;a href=&quot;x&quot;&gt;&amp;&#x27;"
+    assert r('<a href="x">&\'', "html") == "&lt;a href=&quot;x&quot;&gt;&amp;&#x27;"
 
 
 def test_xml_uses_apos_for_apostrophe():
@@ -113,8 +113,15 @@ def test_shell_handles_embedded_single_quote():
 # --- empty / identity ----------------------------------------------------------
 def test_empty_string_each_style():
     for style in (
-        "json", "js", "python", "c", "backslash", "html", "xml",
-        "unicode_escape", "quoted_printable",
+        "json",
+        "js",
+        "python",
+        "c",
+        "backslash",
+        "html",
+        "xml",
+        "unicode_escape",
+        "quoted_printable",
     ):
         assert r("", style) == ""
 
@@ -130,8 +137,17 @@ def test_registered_with_style_enum():
     tool = next(t for t in asyncio.run(mcp.list_tools()) if t.name == "string_escape")
     styles = tool.inputSchema["properties"]["style"]["enum"]
     assert set(styles) == {
-        "json", "js", "python", "c", "shell", "html", "xml", "backslash",
-        "unicode_escape", "quoted_printable", "mime_word",
+        "json",
+        "js",
+        "python",
+        "c",
+        "shell",
+        "html",
+        "xml",
+        "backslash",
+        "unicode_escape",
+        "quoted_printable",
+        "mime_word",
     }
 
 
