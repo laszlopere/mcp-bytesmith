@@ -231,7 +231,7 @@ Checkbox legend:  [ ] not started   [~] in progress   [x] done
                desc: Checksum a file on disk, optionally verifying it against an expected digest.
                gate: stdlib   (separate: reads the filesystem; soft-verify)
                ret: {algorithm, digest, path, size, verified?:bool}
-    [ ] 10.3.  hmac(data req, key req, algorithm opt=sha256,
+    [x] 10.3.  hmac(data req, key req, algorithm opt=sha256,
                input_format opt=text, key_format opt=text,
                output_format opt=hex, expected opt)         -> §1.3.1
                desc: Compute or verify an HMAC authentication tag over data with a secret key.

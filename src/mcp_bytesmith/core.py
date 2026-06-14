@@ -28,6 +28,7 @@ import base64
 import binascii
 import codecs
 import hashlib
+import hmac as _hmac
 import html
 import json
 import math
@@ -690,6 +691,55 @@ def hash_file(
     }
     if expected is not None:
         result["verified"] = _parse_expected(expected, output_format) == digest
+    return result
+
+
+# --- hmac (§2.1.3, §1.3.1) -----------------------------------------------------
+# Keyed-hash message authentication. digestmod is restricted to the cryptographic
+# hashes (HMAC is undefined for CRC/xxh/fnv/shake). When `expected` is supplied,
+# `valid` reports a constant-time comparison against the computed tag.
+HmacAlgorithm = Literal[
+    "md5",
+    "sha1",
+    "sha224",
+    "sha256",
+    "sha384",
+    "sha512",
+    "sha3_256",
+    "sha3_512",
+    "blake2b",
+    "blake2s",
+]
+
+
+def hmac(
+    data: str,
+    key: str,
+    algorithm: HmacAlgorithm = "sha256",
+    input_format: Literal["text", "hex", "base64"] = "text",
+    key_format: Literal["text", "hex", "base64"] = "text",
+    output_format: Literal["hex", "base64"] = "hex",
+    expected: str | None = None,
+) -> dict:
+    """Compute or verify an HMAC authentication tag over data with a secret key.
+
+    `data` and `key` are decoded with `input_format` / `key_format`. When
+    `expected` is supplied, `valid` reports a constant-time comparison against the
+    computed tag (tolerant of case/`0x`/whitespace in the expected value).
+    """
+    raw = _to_bytes(data, input_format)
+    keyb = _to_bytes(key, key_format)
+    mac = _hmac.new(keyb, raw, algorithm).digest()
+
+    result: dict[str, str | bool] = {
+        "algorithm": algorithm,
+        "mac": _render(mac, output_format),
+        "output_format": output_format,
+    }
+    if expected is not None:
+        result["valid"] = _hmac.compare_digest(
+            _parse_expected(expected, output_format), mac
+        )
     return result
 
 
@@ -1718,6 +1768,7 @@ def register(mcp) -> None:
     mcp.tool()(time_convert)
     mcp.tool()(hash)
     mcp.tool()(hash_file)
+    mcp.tool()(hmac)
     mcp.tool()(encode)
     mcp.tool()(decode)
     mcp.tool()(data_uri)

@@ -25,7 +25,8 @@ covers the everyday primitives: `encode` and `decode` move data between a wide
 set of schemes (hex, the Base64/Base32 family, Base58/Base58check, Base45, and
 more), `hash` computes cryptographic, CRC, and fast non-cryptographic digests,
 `hash_file` checksums a file on disk and soft-verifies it against an expected
-digest, and `num_convert` translates integers between bases. Rounding out the core are
+digest, `hmac` computes and verifies keyed-hash authentication tags, and
+`num_convert` translates integers between bases. Rounding out the core are
 `bytes_edit` (pad/trim/slice/concat byte glue), `data_uri` (build and parse
 `data:` URIs), `unicode_normalize` and `charset_transcode` for text and
 character-set work, `string_escape`/`string_unescape` for JSON/JS/Python/C
