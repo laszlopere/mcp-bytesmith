@@ -128,6 +128,18 @@ def test_unterminated_brace_rejected():
         SU("\\u{1f600", "js")
 
 
+def test_c_greedy_hex_needs_a_digit():
+    # C's greedy \x must be followed by at least one hex digit.
+    with pytest.raises(ValueError, match=r"\\x needs at least one hex digit"):
+        SU("\\xZ", "c")
+
+
+def test_python_wide_unicode_truncated_rejected():
+    # \U requires exactly eight hex digits.
+    with pytest.raises(ValueError, match=r"\\U needs eight hex digits"):
+        SU("\\U0001F60", "python")
+
+
 def test_trailing_backslash_kept_literal():
     assert r("ab\\", "backslash") == "ab\\"
 

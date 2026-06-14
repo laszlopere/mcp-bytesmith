@@ -232,6 +232,58 @@ def test_base64_output_format():
     assert D("666f6f626172", "base16", output_format="base64")["decoded"] == "Zm9vYmFy"
 
 
+# --- malformed payloads (hand-rolled inverse decoders) -------------------------
+def test_base32crockford_rejects_bad_character():
+    with pytest.raises(ValueError, match="invalid Crockford base32 character"):
+        D("@@", "base32crockford")
+
+
+def test_base62_rejects_bad_character():
+    with pytest.raises(ValueError, match="invalid base62 character"):
+        D("hello!", "base62")
+
+
+def test_base62_rejects_bad_alphabet():
+    with pytest.raises(ValueError, match="62 distinct characters"):
+        D("abc", "base62", options={"alphabet": "0123"})
+
+
+def test_z85_rejects_bad_character():
+    with pytest.raises(ValueError, match="invalid Z85 character"):
+        D("     ", "z85")  # 5 chars, but space is not in the Z85 alphabet
+
+
+def test_z85_rejects_group_overflowing_32_bits():
+    # '#####' decodes to 85**5-1 which exceeds the 32-bit field a Z85 group holds.
+    with pytest.raises(ValueError, match="overflows 32 bits"):
+        D("#####", "z85")
+
+
+def test_bech32_rejects_missing_separator():
+    with pytest.raises(ValueError, match="separator"):
+        D("abc", "bech32")
+
+
+def test_bech32_rejects_bad_data_character():
+    # Valid separator position, but 'b' is not a bech32 data character.
+    with pytest.raises(ValueError, match="invalid bech32 data character"):
+        D("bc1bbbbbb", "bech32")
+
+
+def test_convertbits_rejects_invalid_padding():
+    # The strict 5->8 regroup (pad=False) rejects a leftover group rather than
+    # silently truncating a malformed bech32 payload.
+    from mcp_bytesmith.core import _convertbits
+
+    with pytest.raises(ValueError, match="invalid padding bits"):
+        _convertbits([1], 5, 8, pad=False)
+
+
+def test_options_string_must_decode_to_object():
+    with pytest.raises(ValueError, match="`options` must be an object"):
+        D("abc", "base62", options="123")
+
+
 def test_unknown_scheme_raises():
     with pytest.raises(ValueError):
         D("abc", "base999")

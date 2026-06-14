@@ -118,6 +118,18 @@ def test_pad_bytes_must_be_positive():
         num_convert("5", "dec", "hex", pad_bytes=0)
 
 
+def test_unknown_from_base_raises():
+    # Literal-typed at the schema boundary, but the function still guards a bad
+    # base name passed directly.
+    with pytest.raises(ValueError, match="unknown from_base"):
+        num_convert("1", "base57", "dec")
+
+
+def test_unknown_to_base_raises():
+    with pytest.raises(ValueError, match="unknown to_base"):
+        num_convert("1", "dec", "base57")
+
+
 # --- app registration / schema -------------------------------------------------
 def test_registered_with_enum_schema():
     tool = next(t for t in asyncio.run(mcp.list_tools()) if t.name == "num_convert")

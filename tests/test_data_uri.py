@@ -90,6 +90,14 @@ def test_parse_extracts_parameters():
     assert out["parameters"] == {"charset": "iso-8859-7", "foo": "bar"}
 
 
+def test_parse_valueless_parameter_segment():
+    # A bare ';flag' segment (no '=') is recorded with an empty-string value.
+    out = _parse("data:text/plain;flag,hi")
+    assert out["media_type"] == "text/plain"
+    assert out["parameters"] == {"flag": ""}
+    assert out["data"] == "hi"
+
+
 def test_parse_binary_payload_as_hex():
     out = _parse("data:image/png;base64,iVBORw0KGgo=", output_format="hex")
     assert out["media_type"] == "image/png"

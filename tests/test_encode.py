@@ -205,9 +205,37 @@ def test_idna_punycode():
 
 
 # --- errors / options -----------------------------------------------------------
+def test_base32crockford_empty_input():
+    # Empty input yields an empty Crockford string (no symbols, no padding).
+    assert _e("", "base32crockford") == ""
+
+
+def test_bech32_rejects_non_printable_hrp():
+    # A truthy but out-of-range hrp char (ord > 126) fails the hrp validation.
+    with pytest.raises(ValueError, match="invalid bech32 hrp"):
+        E("0xabcd", "bech32", input_format="hex", options={"hrp": "b€"})
+
+
+def test_hexdump_zero_width_raises():
+    with pytest.raises(ValueError, match="width must be positive"):
+        E("abcd", "hexdump", options={"width": 0})
+
+
+def test_options_string_must_decode_to_object():
+    # A JSON scalar (not an object) is rejected.
+    with pytest.raises(ValueError, match="`options` must be an object"):
+        E("foobar", "base32", options="123")
+
+
 def test_unknown_scheme_raises():
     with pytest.raises(ValueError):
         E("abc", "base999")
+
+
+def test_bad_base64_input_raises():
+    # The base64 input-format branch of the shared _to_bytes decoder.
+    with pytest.raises(ValueError, match="invalid base64 input"):
+        E("@@@@", "base64", input_format="base64")
 
 
 def test_bad_hex_input_raises():

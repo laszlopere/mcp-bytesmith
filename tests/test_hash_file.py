@@ -72,6 +72,20 @@ def test_xxh64_matches_library(sample):
     assert out["digest"] == xxhash.xxh64(CONTENT).hexdigest()
 
 
+def test_fnv1a_32_matches_in_memory_hash(sample):
+    from mcp_bytesmith.core import hash as H
+
+    out = HF(str(sample), "fnv1a_32")
+    assert out["digest"] == H(CONTENT.decode(), "fnv1a_32")["digest"]
+
+
+def test_fnv1a_64_matches_in_memory_hash(sample):
+    from mcp_bytesmith.core import hash as H
+
+    out = HF(str(sample), "fnv1a_64")
+    assert out["digest"] == H(CONTENT.decode(), "fnv1a_64")["digest"]
+
+
 def test_empty_file(tmp_path):
     p = tmp_path / "empty"
     p.write_bytes(b"")
@@ -113,6 +127,12 @@ def test_verify_base64(sample):
 def test_bad_expected_hex_raises(sample):
     with pytest.raises(ValueError):
         HF(str(sample), expected="not-hex!")
+
+
+def test_bad_expected_base64_raises(sample):
+    # In base64 output mode an `expected` that is not valid base64 is rejected.
+    with pytest.raises(ValueError, match="not valid base64"):
+        HF(str(sample), expected="@@@@not-base64", output_format="base64")
 
 
 # --- filesystem errors ---------------------------------------------------------

@@ -149,9 +149,23 @@ def test_length_not_multiple_of_width_raises():
         byte_order("0x123456", "big", "little", width=2)
 
 
+def test_width_over_max_alloc_raises():
+    # A multi-megabyte width would force a huge zero-pad; bounded by _MAX_ALLOC.
+    from mcp_bytesmith.core import _MAX_ALLOC
+
+    with pytest.raises(ValueError, match="width must be <="):
+        byte_order("0x1234", "little", "big", width=_MAX_ALLOC + 1)
+
+
 def test_invalid_hex_raises():
     with pytest.raises(ValueError):
         byte_order("0xZZ", "little", "big")
+
+
+def test_invalid_base64_input_raises():
+    # Exercises the base64 branch of the shared _to_bytes decoder.
+    with pytest.raises(ValueError, match="invalid base64 input"):
+        byte_order("@@@@", "little", "big", input_format="base64")
 
 
 # --- app registration / schema -------------------------------------------------

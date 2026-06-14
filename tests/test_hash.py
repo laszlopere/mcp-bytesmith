@@ -81,10 +81,31 @@ def test_shake_length_capped():
         H("abc", "shake_128", length=2**31)
 
 
+def test_shake_length_zero_is_empty_digest():
+    # Boundary: a zero-length SHAKE digest is valid and empty.
+    assert H("abc", "shake_256", length=0)["digest"] == ""
+
+
+def test_shake_negative_length_raises():
+    with pytest.raises(ValueError, match="non-negative"):
+        H("abc", "shake_128", length=-1)
+
+
 # --- keyed blake2 --------------------------------------------------------------
 def test_blake2b_keyed():
     out = H("message", "blake2b", key="secret")
     assert out["digest"] == hashlib.blake2b(b"message", key=b"secret").hexdigest()
+
+
+def test_blake2s_keyed():
+    out = H("message", "blake2s", key="secret")
+    assert out["digest"] == hashlib.blake2s(b"message", key=b"secret").hexdigest()
+    assert out["bits"] == 256
+
+
+def test_blake2s_keyless():
+    out = H("message", "blake2s")
+    assert out["digest"] == hashlib.blake2s(b"message").hexdigest()
 
 
 def test_key_rejected_for_non_blake2():
