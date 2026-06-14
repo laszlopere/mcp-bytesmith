@@ -212,7 +212,7 @@ Checkbox legend:  [ ] not started   [~] in progress   [x] done
     [x] 9.5.  Commit the green skeleton; tag-free. Feature work starts after.
 
 
-[~] 10.  HASH & MAC  —  produce a fixed digest / tag from data
+[x] 10.  HASH & MAC  —  produce a fixed digest / tag from data
     [x] 10.1.  hash(data req, algorithm req, input_format opt=text,
                output_format opt=hex, length opt, key opt, seed opt)
                desc: Compute a cryptographic, CRC, or fast non-crypto digest of bytes.
@@ -252,7 +252,7 @@ Checkbox legend:  [ ] not started   [~] in progress   [x] done
                desc: Apply or verify an EIP-55 mixed-case address checksum.
                gate: ethereum   (keccak-based; action=verify -> see §2.10)
                action: encode (EIP-55) | verify -> {address, valid?}
-    [ ] 10.7.  ens_namehash(name req)                            -> §1.15.5
+    [x] 10.7.  ens_namehash(name req)                            -> §1.15.5
                desc: Compute the EIP-137 namehash (and labelhash) of an ENS name.
                gate: ethereum  [MAYBE — defer]
                ret: {namehash, labelhash}

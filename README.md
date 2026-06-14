@@ -36,8 +36,9 @@ An opt-in **Ethereum/EVM toolset** (enabled via the `ethereum` extra) adds the
 primitives you reach for when working on-chain: `eth_hash` for keccak-256,
 EIP-191, and EIP-712 typed-data hashing, `abi_codec` and `rlp_codec` for ABI and
 RLP encode/decode, `eth_selector` for function and event selectors, `eth_tx_codec`
-for transactions, `eth_storage_slot` for storage layout, and `eth_address_case`
-for EIP-55 checksums. An always-available `info` tool reports which toolsets are
+for transactions, `eth_storage_slot` for storage layout, `eth_address_case`
+for EIP-55 checksums, and `ens_namehash` for EIP-137 ENS namehash/labelhash. An
+always-available `info` tool reports which toolsets are
 active along with version information.
 
 Further toolsets (crypto, IDs, validation) are on the roadmap — see [`TODO`](./TODO).

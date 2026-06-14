@@ -1064,6 +1064,28 @@ def eth_address_case(action: Literal["encode", "verify"], address: str) -> dict:
     raise ValueError(f"unknown action {action!r}; expected 'encode' or 'verify'")
 
 
+# --- ENS namehash (§1.15.5, EIP-137) -------------------------------------------
+# Recursive keccak: namehash('') = 32 zero bytes; namehash(label.rest) =
+# keccak256(namehash(rest) ++ keccak256(label)). `labelhash` is the keccak of the
+# leftmost label (the .eth registrar token id for that name). The name is hashed
+# as given — EIP-137 expects it already UTS-46 normalized (use unicode_normalize
+# first if needed); empty labels (leading/trailing/double dots) are rejected.
+def ens_namehash(name: str) -> dict:
+    """Compute the EIP-137 namehash (and labelhash) of an ENS name."""
+    node = b"\x00" * 32
+    labels = name.split(".") if name else []
+    if any(label == "" for label in labels):
+        raise ValueError(f"name has an empty label (stray dot): {name!r}")
+    for label in reversed(labels):
+        node = _keccak256(node + _keccak256(label.encode("utf-8")))
+    labelhash = _keccak256(labels[0].encode("utf-8")) if labels else node
+    return {
+        "name": name,
+        "namehash": "0x" + node.hex(),
+        "labelhash": "0x" + labelhash.hex(),
+    }
+
+
 def register(mcp) -> None:
     """Register the ethereum toolset's tools against the FastMCP app."""
     mcp.tool()(eth_hash)
@@ -1073,3 +1095,4 @@ def register(mcp) -> None:
     mcp.tool()(eth_storage_slot)
     mcp.tool()(eth_tx_codec)
     mcp.tool()(eth_address_case)
+    mcp.tool()(ens_namehash)
