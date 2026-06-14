@@ -99,7 +99,11 @@ def _bencode_decode_item(data: bytes, pos: int) -> tuple[Any, int]:
         if end < 0:
             raise ValueError("bencode integer is missing its 'e' terminator")
         token = data[pos + 1 : end]
-        if token in (b"", b"-") or (token[:1] == b"0" and token != b"0") or token[:2] == b"-0":
+        if (
+            token in (b"", b"-")
+            or (token[:1] == b"0" and token != b"0")
+            or token[:2] == b"-0"
+        ):
             raise ValueError(f"malformed bencode integer {token!r}")
         return int(token), end + 1
     if marker == b"l":  # list: l<items>e
@@ -162,11 +166,19 @@ def _protobuf_decode_message(data: bytes) -> list[dict]:
             raise ValueError("protobuf field number 0 is invalid")
         if wire_type == 0:  # varint
             value, pos = _read_varint(data, pos)
-            fields.append({"field": field_number, "wire_type": "varint", "value": value})
+            fields.append(
+                {"field": field_number, "wire_type": "varint", "value": value}
+            )
         elif wire_type == 1:  # 64-bit fixed
             if pos + 8 > len(data):
                 raise ValueError("protobuf i64 field truncated")
-            fields.append({"field": field_number, "wire_type": "i64", "value": "0x" + data[pos : pos + 8].hex()})
+            fields.append(
+                {
+                    "field": field_number,
+                    "wire_type": "i64",
+                    "value": "0x" + data[pos : pos + 8].hex(),
+                }
+            )
             pos += 8
         elif wire_type == 2:  # length-delimited
             length, pos = _read_varint(data, pos)
@@ -175,14 +187,28 @@ def _protobuf_decode_message(data: bytes) -> list[dict]:
                 raise ValueError("protobuf length-delimited field truncated")
             chunk = data[pos:end]
             pos = end
-            fields.append({"field": field_number, "wire_type": "bytes", "value": _protobuf_chunk(chunk)})
+            fields.append(
+                {
+                    "field": field_number,
+                    "wire_type": "bytes",
+                    "value": _protobuf_chunk(chunk),
+                }
+            )
         elif wire_type == 5:  # 32-bit fixed
             if pos + 4 > len(data):
                 raise ValueError("protobuf i32 field truncated")
-            fields.append({"field": field_number, "wire_type": "i32", "value": "0x" + data[pos : pos + 4].hex()})
+            fields.append(
+                {
+                    "field": field_number,
+                    "wire_type": "i32",
+                    "value": "0x" + data[pos : pos + 4].hex(),
+                }
+            )
             pos += 4
         else:  # 3/4 are deprecated start/end-group markers
-            raise ValueError(f"unsupported protobuf wire type {wire_type} (groups are not supported)")
+            raise ValueError(
+                f"unsupported protobuf wire type {wire_type} (groups are not supported)"
+            )
     return fields
 
 
@@ -203,19 +229,27 @@ def _protobuf_chunk(chunk: bytes) -> Any:
 def serialize_codec(
     format: Annotated[
         Literal["cbor", "msgpack", "bencode", "protobuf"],
-        Field(description="Serializer: cbor, msgpack, bencode (encode+decode), or protobuf (decode-only raw wire)."),
+        Field(
+            description="Serializer: cbor, msgpack, bencode (encode+decode), or protobuf (decode-only raw wire)."
+        ),
     ],
     action: Annotated[
         Literal["encode", "decode"],
-        Field(description="encode a JSON value to hex, or decode a hex string back to a value."),
+        Field(
+            description="encode a JSON value to hex, or decode a hex string back to a value."
+        ),
     ],
     data: Annotated[
         Any,
-        Field(description="When encoding, the JSON value (string starting with { or [ is parsed as JSON); when decoding, a hex string (0x prefix optional)."),
+        Field(
+            description="When encoding, the JSON value (string starting with { or [ is parsed as JSON); when decoding, a hex string (0x prefix optional)."
+        ),
     ] = None,
     options: Annotated[
         dict[str, Any] | None,
-        Field(description="Reserved for future per-format typing (e.g. an ssz schema); currently unused."),
+        Field(
+            description="Reserved for future per-format typing (e.g. an ssz schema); currently unused."
+        ),
     ] = None,
 ) -> dict:
     """Encode / decode schemaless structured data across these binary serializers.

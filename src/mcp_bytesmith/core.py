@@ -101,8 +101,10 @@ _BITS_PER_DIGIT = {"hex": 4, "bin": 1, "oct": 3}
 def num_convert(
     value: Annotated[
         str,
-        Field(description="Integer to convert, read in `from_base`; a leading "
-        "0x/0b/0o radix prefix and a '-' sign are accepted."),
+        Field(
+            description="Integer to convert, read in `from_base`; a leading "
+            "0x/0b/0o radix prefix and a '-' sign are accepted."
+        ),
     ],
     from_base: Annotated[
         Literal["hex", "dec", "bin", "oct"],
@@ -110,14 +112,18 @@ def num_convert(
     ],
     to_base: Annotated[
         Literal["hex", "dec", "bin", "oct"],
-        Field(description="Base to render the result in; non-decimal output is "
-        "prefixed 0x/0b/0o."),
+        Field(
+            description="Base to render the result in; non-decimal output is "
+            "prefixed 0x/0b/0o."
+        ),
     ],
     pad_bytes: Annotated[
         int | None,
-        Field(description="Zero-fill the output to this byte width (a minimum, "
-        "never truncating); bit-aligned, so rejected for decimal output. Default "
-        "None means no padding."),
+        Field(
+            description="Zero-fill the output to this byte width (a minimum, "
+            "never truncating); bit-aligned, so rejected for decimal output. Default "
+            "None means no padding."
+        ),
     ] = None,
 ) -> dict:
     """Convert a big-integer between bases (hex/dec/bin/oct).
@@ -187,24 +193,32 @@ def _resolve_byte_order(order: str) -> str:
 def byte_order(
     data: Annotated[
         str,
-        Field(description="Hex byte buffer (0x-prefix optional) to byte-swap, "
-        "treated as a sequence of fixed-size `width`-byte fields."),
+        Field(
+            description="Hex byte buffer (0x-prefix optional) to byte-swap, "
+            "treated as a sequence of fixed-size `width`-byte fields."
+        ),
     ],
     from_order: Annotated[
         ByteOrder,
-        Field(description="Current byte order of `data`: little|big|network|host "
-        "(network=big-endian, host=platform's sys.byteorder)."),
+        Field(
+            description="Current byte order of `data`: little|big|network|host "
+            "(network=big-endian, host=platform's sys.byteorder)."
+        ),
     ],
     to_order: Annotated[
         ByteOrder,
-        Field(description="Target byte order: little|big|network|host. Differing "
-        "orders reverse each field; equal orders only apply width normalization."),
+        Field(
+            description="Target byte order: little|big|network|host. Differing "
+            "orders reverse each field; equal orders only apply width normalization."
+        ),
     ],
     width: Annotated[
         int | None,
-        Field(description="Fixed field size in bytes: a shorter buffer is left "
-        "zero-padded up to it, a longer one is split into width-byte groups each "
-        "swapped independently. Default None swaps the whole buffer as one field."),
+        Field(
+            description="Fixed field size in bytes: a shorter buffer is left "
+            "zero-padded up to it, a longer one is split into width-byte groups each "
+            "swapped independently. Default None swaps the whole buffer as one field."
+        ),
     ] = None,
     input_format: Annotated[
         Literal["text", "hex", "base64"],
@@ -413,30 +427,40 @@ def time_convert(
     ],
     to_format: Annotated[
         ToTimeFormat,
-        Field(description="Output format: iso8601 (RFC 3339), rfc2822, http "
-        "(IMF-fixdate, always GMT), unix/unix_ms/unix_us/unix_ns epoch, or "
-        "strftime (needs `format_pattern`)."),
+        Field(
+            description="Output format: iso8601 (RFC 3339), rfc2822, http "
+            "(IMF-fixdate, always GMT), unix/unix_ms/unix_us/unix_ns epoch, or "
+            "strftime (needs `format_pattern`)."
+        ),
     ],
     from_format: Annotated[
         FromTimeFormat,
-        Field(description="Format of `value`; default 'auto' sniffs "
-        "iso8601/rfc2822/http/unix. strftime needs `format_pattern`."),
+        Field(
+            description="Format of `value`; default 'auto' sniffs "
+            "iso8601/rfc2822/http/unix. strftime needs `format_pattern`."
+        ),
     ] = "auto",
     from_zone: Annotated[
         str,
-        Field(description="Zone anchoring a naive input (no offset): an IANA name "
-        "(Europe/Budapest), UTC, or a ±HH:MM offset. Default 'UTC'. Ignored when "
-        "the input already carries an offset."),
+        Field(
+            description="Zone anchoring a naive input (no offset): an IANA name "
+            "(Europe/Budapest), UTC, or a ±HH:MM offset. Default 'UTC'. Ignored when "
+            "the input already carries an offset."
+        ),
     ] = "UTC",
     to_zone: Annotated[
         str,
-        Field(description="Zone to shift the instant into before rendering; IANA "
-        "name, UTC, or ±HH:MM offset. Default 'UTC'. Ignored for http (always GMT)."),
+        Field(
+            description="Zone to shift the instant into before rendering; IANA "
+            "name, UTC, or ±HH:MM offset. Default 'UTC'. Ignored for http (always GMT)."
+        ),
     ] = "UTC",
     format_pattern: Annotated[
         str | None,
-        Field(description="strptime/strftime pattern, required on whichever side "
-        "(from_format/to_format) is 'strftime'. Default None."),
+        Field(
+            description="strptime/strftime pattern, required on whichever side "
+            "(from_format/to_format) is 'strftime'. Default None."
+        ),
     ] = None,
 ) -> dict:
     """Convert a timestamp between textual formats (ISO 8601/RFC 2822/HTTP/unix/strftime) and time zones.
@@ -613,9 +637,11 @@ def hash(
     ],
     algorithm: Annotated[
         HashAlgorithm,
-        Field(description="Digest algorithm: crypto (md5/sha1/sha2/sha3/blake2*), "
-        "shake_128/shake_256 (need `length`), CRC (crc8/16/32/32c/64), xxhash "
-        "(xxh32/64/3_64/3_128), or fnv1a_32/fnv1a_64."),
+        Field(
+            description="Digest algorithm: crypto (md5/sha1/sha2/sha3/blake2*), "
+            "shake_128/shake_256 (need `length`), CRC (crc8/16/32/32c/64), xxhash "
+            "(xxh32/64/3_64/3_128), or fnv1a_32/fnv1a_64."
+        ),
     ],
     input_format: Annotated[
         Literal["text", "hex", "base64"],
@@ -623,18 +649,23 @@ def hash(
     ] = "text",
     output_format: Annotated[
         Literal["hex", "base64"],
-        Field(description="How the digest is rendered (bare hex, no 0x); default "
-        "'hex'."),
+        Field(
+            description="How the digest is rendered (bare hex, no 0x); default 'hex'."
+        ),
     ] = "hex",
     length: Annotated[
         int | None,
-        Field(description="Output length in bytes, required for shake_128/shake_256 "
-        "and invalid otherwise. Default None."),
+        Field(
+            description="Output length in bytes, required for shake_128/shake_256 "
+            "and invalid otherwise. Default None."
+        ),
     ] = None,
     key: Annotated[
         str | None,
-        Field(description="Key for blake2b/blake2s only, decoded with "
-        "`input_format`. Default None."),
+        Field(
+            description="Key for blake2b/blake2s only, decoded with "
+            "`input_format`. Default None."
+        ),
     ] = None,
     seed: Annotated[
         int | None,
@@ -751,19 +782,24 @@ def hash_file(
     ],
     algorithm: Annotated[
         FileHashAlgorithm,
-        Field(description="Digest algorithm: crypto (md5/sha1/sha2/sha3/blake2*), "
-        "CRC (crc8/16/32/32c/64), xxhash, or fnv1a_*. shake_* is excluded (no "
-        "`length` arg). Default 'sha256'."),
+        Field(
+            description="Digest algorithm: crypto (md5/sha1/sha2/sha3/blake2*), "
+            "CRC (crc8/16/32/32c/64), xxhash, or fnv1a_*. shake_* is excluded (no "
+            "`length` arg). Default 'sha256'."
+        ),
     ] = "sha256",
     expected: Annotated[
         str | None,
-        Field(description="Expected digest to verify against, in `output_format`; "
-        "case/`0x`/whitespace tolerated. Default None skips verification."),
+        Field(
+            description="Expected digest to verify against, in `output_format`; "
+            "case/`0x`/whitespace tolerated. Default None skips verification."
+        ),
     ] = None,
     output_format: Annotated[
         Literal["hex", "base64"],
-        Field(description="How the digest is rendered (bare hex, no 0x); default "
-        "'hex'."),
+        Field(
+            description="How the digest is rendered (bare hex, no 0x); default 'hex'."
+        ),
     ] = "hex",
 ) -> dict:
     """Checksum a file on disk, optionally verifying it against an expected digest.
@@ -842,8 +878,10 @@ def hmac(
     ],
     algorithm: Annotated[
         HmacAlgorithm,
-        Field(description="Underlying cryptographic hash (HMAC digestmod): "
-        "md5/sha1/sha2*/sha3*/blake2*. Default 'sha256'."),
+        Field(
+            description="Underlying cryptographic hash (HMAC digestmod): "
+            "md5/sha1/sha2*/sha3*/blake2*. Default 'sha256'."
+        ),
     ] = "sha256",
     input_format: Annotated[
         Literal["text", "hex", "base64"],
@@ -855,14 +893,15 @@ def hmac(
     ] = "text",
     output_format: Annotated[
         Literal["hex", "base64"],
-        Field(description="How the tag is rendered (bare hex, no 0x); default "
-        "'hex'."),
+        Field(description="How the tag is rendered (bare hex, no 0x); default 'hex'."),
     ] = "hex",
     expected: Annotated[
         str | None,
-        Field(description="Expected tag to verify against, in `output_format`; "
-        "case/`0x`/whitespace tolerated, compared constant-time. Default None "
-        "skips verification."),
+        Field(
+            description="Expected tag to verify against, in `output_format`; "
+            "case/`0x`/whitespace tolerated, compared constant-time. Default None "
+            "skips verification."
+        ),
     ] = None,
 ) -> dict:
     """Compute or verify an HMAC authentication tag over data with a secret key.
@@ -1066,14 +1105,18 @@ def _encode_extra(scheme: str) -> Any:
 def encode(
     data: Annotated[
         str,
-        Field(description="Input to encode, decoded to bytes via `input_format` "
-        "(idna/bytes32 read it as text)."),
+        Field(
+            description="Input to encode, decoded to bytes via `input_format` "
+            "(idna/bytes32 read it as text)."
+        ),
     ],
     scheme: Annotated[
         EncodeScheme,
-        Field(description="Target encoding: base16/32/32hex/32crockford/45/58/"
-        "58check/62/64/64url, ascii85/base85/z85, url/url_form (percent), idna, "
-        "bech32/bech32m, hexdump, or bytes32 (32-byte EVM word)."),
+        Field(
+            description="Target encoding: base16/32/32hex/32crockford/45/58/"
+            "58check/62/64/64url, ascii85/base85/z85, url/url_form (percent), idna, "
+            "bech32/bech32m, hexdump, or bytes32 (32-byte EVM word)."
+        ),
     ],
     input_format: Annotated[
         Literal["text", "hex", "base64"],
@@ -1081,9 +1124,11 @@ def encode(
     ] = "text",
     options: Annotated[
         dict[str, Any] | None,
-        Field(description="Per-scheme options: padding (bool, base32/64 family), "
-        "alphabet (base58/62), hrp (required for bech32/bech32m), width (hexdump, "
-        "default 16). Default None."),
+        Field(
+            description="Per-scheme options: padding (bool, base32/64 family), "
+            "alphabet (base58/62), hrp (required for bech32/bech32m), width (hexdump, "
+            "default 16). Default None."
+        ),
     ] = None,
 ) -> dict:
     """Encode bytes/text into a string form (base-N, URL, IDNA, bech32, hexdump, bytes32).
@@ -1268,19 +1313,24 @@ def decode(
     ],
     scheme: Annotated[
         EncodeScheme,
-        Field(description="Source encoding (same set as `encode`): base16/32/.../"
-        "64url, ascii85/base85/z85, url/url_form, idna, bech32/bech32m, hexdump, "
-        "or bytes32."),
+        Field(
+            description="Source encoding (same set as `encode`): base16/32/.../"
+            "64url, ascii85/base85/z85, url/url_form, idna, bech32/bech32m, hexdump, "
+            "or bytes32."
+        ),
     ],
     output_format: Annotated[
         Literal["text", "hex", "base64"],
-        Field(description="How recovered bytes are rendered: text=UTF-8, hex=bare "
-        "(no 0x), base64. Default 'text'; pick hex/base64 for non-UTF-8 payloads."),
+        Field(
+            description="How recovered bytes are rendered: text=UTF-8, hex=bare "
+            "(no 0x), base64. Default 'text'; pick hex/base64 for non-UTF-8 payloads."
+        ),
     ] = "text",
     options: Annotated[
         dict[str, Any] | None,
-        Field(description="Per-scheme options: alphabet (base58/base62). Default "
-        "None."),
+        Field(
+            description="Per-scheme options: alphabet (base58/base62). Default None."
+        ),
     ] = None,
 ) -> dict:
     """Decode a base-N/URL/IDNA/bech32/hexdump string back to bytes or text.
@@ -1375,28 +1425,35 @@ def _b64decode(text: str) -> bytes:
 def data_uri(
     action: Annotated[
         Literal["build", "parse"],
-        Field(description="'build' wraps a payload into a data: URI (needs `data`); "
-        "'parse' splits a URI into its parts (needs `uri`)."),
+        Field(
+            description="'build' wraps a payload into a data: URI (needs `data`); "
+            "'parse' splits a URI into its parts (needs `uri`)."
+        ),
     ],
     media_type: Annotated[
         str | None,
-        Field(description="MIME type for build, e.g. 'text/plain' or 'image/png'. "
-        "Default None omits it."),
+        Field(
+            description="MIME type for build, e.g. 'text/plain' or 'image/png'. "
+            "Default None omits it."
+        ),
     ] = None,
     data: Annotated[
         str | None,
-        Field(description="Payload to wrap (action=build), decoded via "
-        "`input_format`. Default None."),
+        Field(
+            description="Payload to wrap (action=build), decoded via "
+            "`input_format`. Default None."
+        ),
     ] = None,
     base64: Annotated[
         bool,
-        Field(description="For build: true base64-encodes the payload (adds "
-        "';base64'), false percent-encodes it. Default true."),
+        Field(
+            description="For build: true base64-encodes the payload (adds "
+            "';base64'), false percent-encodes it. Default true."
+        ),
     ] = True,
     uri: Annotated[
         str | None,
-        Field(description="The 'data:...' URI to parse (action=parse). Default "
-        "None."),
+        Field(description="The 'data:...' URI to parse (action=parse). Default None."),
     ] = None,
     input_format: Annotated[
         Literal["text", "hex", "base64"],
@@ -1404,8 +1461,10 @@ def data_uri(
     ] = "text",
     output_format: Annotated[
         Literal["text", "hex", "base64"],
-        Field(description="How parsed payload is rendered (text=UTF-8 | hex | "
-        "base64); default 'text'."),
+        Field(
+            description="How parsed payload is rendered (text=UTF-8 | hex | "
+            "base64); default 'text'."
+        ),
     ] = "text",
 ) -> dict:
     """Build a data: URI from a payload, or parse one into its parts (RFC 2397).
@@ -1491,9 +1550,11 @@ def _fill_byte(fill: str) -> bytes:
 def bytes_edit(
     action: Annotated[
         Literal["pad", "trim", "slice", "concat", "size", "prefix"],
-        Field(description="Edit to apply: pad (widen to `length`), trim (strip "
-        "`fill`), slice (`start`:`end`), concat (append `parts`), size (report "
-        "byte length), prefix (add/strip 0x)."),
+        Field(
+            description="Edit to apply: pad (widen to `length`), trim (strip "
+            "`fill`), slice (`start`:`end`), concat (append `parts`), size (report "
+            "byte length), prefix (add/strip 0x)."
+        ),
     ],
     data: Annotated[
         str,
@@ -1505,13 +1566,17 @@ def bytes_edit(
     ] = None,
     start: Annotated[
         int | None,
-        Field(description="Slice start index (Python indexing, negatives allowed); "
-        "default None means 0."),
+        Field(
+            description="Slice start index (Python indexing, negatives allowed); "
+            "default None means 0."
+        ),
     ] = None,
     end: Annotated[
         int | None,
-        Field(description="Slice end index (Python indexing, negatives allowed); "
-        "default None means end of buffer."),
+        Field(
+            description="Slice end index (Python indexing, negatives allowed); "
+            "default None means end of buffer."
+        ),
     ] = None,
     parts: Annotated[
         list[str] | None,
@@ -1519,13 +1584,16 @@ def bytes_edit(
     ] = None,
     side: Annotated[
         Literal["left", "right"],
-        Field(description="Which side acts: pad prepend/append, trim leading/"
-        "trailing, prefix add/strip 0x. Default 'left'."),
+        Field(
+            description="Which side acts: pad prepend/append, trim leading/"
+            "trailing, prefix add/strip 0x. Default 'left'."
+        ),
     ] = "left",
     fill: Annotated[
         str,
-        Field(description="The pad/trim byte as one hex byte (0x optional); "
-        "default '00'."),
+        Field(
+            description="The pad/trim byte as one hex byte (0x optional); default '00'."
+        ),
     ] = "00",
 ) -> dict:
     """Edit a hex byte-buffer: pad/trim to width, slice, concat, size, or 0x-prefix.
@@ -1592,9 +1660,11 @@ def unicode_normalize(
     ],
     form: Annotated[
         Literal["NFC", "NFD", "NFKC", "NFKD"],
-        Field(description="Normalization form: NFC/NFD canonical compose/decompose; "
-        "NFKC/NFKD also fold compatibility variants (ligatures, full-width, "
-        "circled digits). Default 'NFC'."),
+        Field(
+            description="Normalization form: NFC/NFD canonical compose/decompose; "
+            "NFKC/NFKD also fold compatibility variants (ligatures, full-width, "
+            "circled digits). Default 'NFC'."
+        ),
     ] = "NFC",
 ) -> dict:
     """Normalize text to a Unicode normalization form (NFC/NFD/NFKC/NFKD).
@@ -1626,8 +1696,10 @@ def charset_transcode(
     ],
     from_charset: Annotated[
         str,
-        Field(description="Encoding to encode `text` under to recover its raw "
-        "bytes, e.g. cp1252, latin-1, utf-8."),
+        Field(
+            description="Encoding to encode `text` under to recover its raw "
+            "bytes, e.g. cp1252, latin-1, utf-8."
+        ),
     ],
     to_charset: Annotated[
         str,
@@ -1635,8 +1707,10 @@ def charset_transcode(
     ],
     errors: Annotated[
         str,
-        Field(description="Codec error handler applied to both legs: strict|"
-        "replace|ignore|backslashreplace|…. Default 'strict'."),
+        Field(
+            description="Codec error handler applied to both legs: strict|"
+            "replace|ignore|backslashreplace|…. Default 'strict'."
+        ),
     ] = "strict",
 ) -> dict:
     """Convert text between character encodings (e.g. latin-1/cp1252 <-> utf-8).
@@ -1768,10 +1842,12 @@ def string_escape(
             "quoted_printable",
             "mime_word",
         ],
-        Field(description="Escaping convention: json|js|python|c|backslash "
-        "(backslash escapes), html|xml (entities), unicode_escape, "
-        "quoted_printable, mime_word (=?UTF-8?B?...?=), or shell (paste-safe "
-        "single-quoted token)."),
+        Field(
+            description="Escaping convention: json|js|python|c|backslash "
+            "(backslash escapes), html|xml (entities), unicode_escape, "
+            "quoted_printable, mime_word (=?UTF-8?B?...?=), or shell (paste-safe "
+            "single-quoted token)."
+        ),
     ],
 ) -> dict:
     """Escape text for a source-code or markup context (JSON/JS/C/shell/HTML/...).
@@ -1948,9 +2024,11 @@ def string_unescape(
             "quoted_printable",
             "mime_word",
         ],
-        Field(description="Escaping convention `text` is in (inverse of "
-        "string_escape): json|js|python|c|backslash, html|xml, unicode_escape, "
-        "quoted_printable, mime_word, or shell."),
+        Field(
+            description="Escaping convention `text` is in (inverse of "
+            "string_escape): json|js|python|c|backslash, html|xml, unicode_escape, "
+            "quoted_printable, mime_word, or shell."
+        ),
     ],
 ) -> dict:
     """Reverse a source-code or markup escaping back to the original text.
@@ -2048,9 +2126,11 @@ def _eff_wordlist() -> tuple[str, ...]:
 def random(
     kind: Annotated[
         Literal["bytes", "hex", "urlsafe", "token", "passphrase"],
-        Field(description="Output shape: bytes|hex|urlsafe draw `nbytes` random "
-        "bytes; token is `length` alphanumeric chars; passphrase joins `words` "
-        "diceware words. Default 'urlsafe'."),
+        Field(
+            description="Output shape: bytes|hex|urlsafe draw `nbytes` random "
+            "bytes; token is `length` alphanumeric chars; passphrase joins `words` "
+            "diceware words. Default 'urlsafe'."
+        ),
     ] = "urlsafe",
     length: Annotated[
         int | None,
@@ -2070,8 +2150,10 @@ def random(
     ] = "-",
     wordlist: Annotated[
         list[str] | None,
-        Field(description="Custom passphrase word list; default None uses the "
-        "bundled EFF large diceware list (7776 words)."),
+        Field(
+            description="Custom passphrase word list; default None uses the "
+            "bundled EFF large diceware list (7776 words)."
+        ),
     ] = None,
     output_format: Annotated[
         Literal["hex", "base64"],

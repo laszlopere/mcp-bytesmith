@@ -793,7 +793,7 @@ def eth_storage_slot(
         dict[str, Any],
         Field(
             description='Layout object: {"kind":"mapping"|"dynamic_array", "slot":'
-            ' <declared base slot, int/decimal/0x-hex>, ...}. mapping takes optional'
+            " <declared base slot, int/decimal/0x-hex>, ...}. mapping takes optional"
             ' "key_type" (default "uint256"; lists for nested mappings); '
             'dynamic_array takes optional "element_size" in slots (default 1). A '
             "stringified JSON object is accepted."

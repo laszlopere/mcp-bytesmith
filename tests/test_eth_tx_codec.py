@@ -350,8 +350,7 @@ def test_ec_add_doubling_matches_known_2g():
     # Well-known secp256k1 2*G x-coordinate.
     two_g = _ec_add(_SECP_G, _SECP_G)
     assert (
-        two_g[0]
-        == 0xC6047F9441ED7D6D3045406E95C07CD85C778E4B8CEF3CA7ABAC09B95C709EE5
+        two_g[0] == 0xC6047F9441ED7D6D3045406E95C07CD85C778E4B8CEF3CA7ABAC09B95C709EE5
     )
 
 

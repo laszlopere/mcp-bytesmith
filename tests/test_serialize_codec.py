@@ -72,7 +72,9 @@ def test_bencode_known_vectors():
     assert _enc("bencode", 42) == b"i42e".hex()
     assert _enc("bencode", "spam") == b"4:spam".hex()
     assert _enc("bencode", ["spam", 42]) == b"l4:spami42ee".hex()
-    assert _enc("bencode", {"foo": 42, "bar": "spam"}) == b"d3:bar4:spam3:fooi42ee".hex()
+    assert (
+        _enc("bencode", {"foo": 42, "bar": "spam"}) == b"d3:bar4:spam3:fooi42ee".hex()
+    )
 
 
 def test_bencode_keys_are_sorted_by_bytes():
@@ -173,7 +175,9 @@ def test_encode_stringified_structure_is_parsed():
     # A client that stringifies the object still works (JSON-parsed when it
     # starts with '{' or '[').
     assert _enc("cbor", '{"a": 1}') == _enc("cbor", {"a": 1})
-    assert _enc("cbor", "plain") != _enc("cbor", '{"a": 1}')  # bare string stays a string
+    assert _enc("cbor", "plain") != _enc(
+        "cbor", '{"a": 1}'
+    )  # bare string stays a string
 
 
 # --- available() guard ---------------------------------------------------------

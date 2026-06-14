@@ -78,7 +78,10 @@ def test_hex_and_base64_inputs_match_text():
 
 def test_base64_output():
     out = HM("message", "secret", output_format="base64")
-    assert base64.b64decode(out["mac"]) == ref.new(b"secret", b"message", "sha256").digest()
+    assert (
+        base64.b64decode(out["mac"])
+        == ref.new(b"secret", b"message", "sha256").digest()
+    )
 
 
 # --- soft-verify ---------------------------------------------------------------
@@ -129,9 +132,7 @@ def test_registered_with_crypto_only_algorithms():
 
 def test_callable_through_app():
     async def go():
-        return await mcp.call_tool(
-            "hmac", {"data": "message", "key": "secret"}
-        )
+        return await mcp.call_tool("hmac", {"data": "message", "key": "secret"})
 
     result = asyncio.run(go())
     contents = result[0] if isinstance(result, tuple) else result

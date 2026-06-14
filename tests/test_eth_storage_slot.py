@@ -116,9 +116,7 @@ def test_mapping_bytes_key_is_unpadded():
 
 
 def test_mapping_bool_key_is_padded():
-    out = eth_storage_slot(
-        {"kind": "mapping", "slot": 1, "key_type": "bool"}, key=True
-    )
+    out = eth_storage_slot({"kind": "mapping", "slot": 1, "key_type": "bool"}, key=True)
     assert out["slot_hex"] == _ref((1).to_bytes(32, "big") + (1).to_bytes(32, "big"))
 
 
