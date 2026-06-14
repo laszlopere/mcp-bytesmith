@@ -32,16 +32,20 @@ import html
 import json
 import math
 import quopri
+import re
 import secrets
 import shlex
 import string
 import sys
 import unicodedata
 import zlib
+from datetime import datetime, timedelta, timezone
 from email.header import decode_header, make_header
+from email.utils import format_datetime, parsedate_to_datetime
 from importlib.resources import files
 from typing import Any, Literal
 from urllib.parse import quote, quote_plus, unquote_to_bytes
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 # Upper bound on caller-controlled output sizes (SHAKE digest length, hexdump
@@ -214,6 +218,186 @@ def byte_order(
         "to_order": to_order,
         "width": w,
         "output_format": output_format,
+    }
+
+
+# --- time_convert (§2.9.6 / TODO 18.6 — textual time formats & zones) ----------
+# Parse a timestamp in one textual format, normalize it to an aware instant, then
+# render it in another format and time zone. Everything is stdlib: datetime +
+# zoneinfo (IANA db from the OS) + email.utils (RFC 2822 / HTTP-date). A NAIVE
+# input (unix epochs are inherently UTC; a bare ISO string has no offset) is
+# anchored with `from_zone`; an input that already carries an offset ignores it.
+# `to_zone` shifts the instant before rendering. HTTP-date is always GMT, so the
+# `http` output renders in UTC regardless of `to_zone`. datetime caps precision at
+# microseconds, so unix_ns beyond that is truncated.
+_UNIX_SCALE = {
+    "unix": 1,
+    "unix_ms": 1000,
+    "unix_us": 1_000_000,
+    "unix_ns": 1_000_000_000,
+}
+
+FromTimeFormat = Literal[
+    "auto",
+    "iso8601",
+    "rfc2822",
+    "http",
+    "unix",
+    "unix_ms",
+    "unix_us",
+    "unix_ns",
+    "strftime",
+]
+ToTimeFormat = Literal[
+    "iso8601",
+    "rfc2822",
+    "http",
+    "unix",
+    "unix_ms",
+    "unix_us",
+    "unix_ns",
+    "strftime",
+]
+
+
+def _resolve_zone(name: str) -> tuple[Any, str]:
+    """Resolve a zone name to (tzinfo, canonical label).
+
+    Accepts UTC/GMT/Z, a ±HH:MM (or ±HHMM) fixed offset, or an IANA name.
+    """
+    n = name.strip()
+    if n.upper() in ("UTC", "GMT", "Z"):
+        return timezone.utc, "UTC"
+    m = re.fullmatch(r"([+-])(\d{2}):?(\d{2})", n)
+    if m:
+        sign = 1 if m.group(1) == "+" else -1
+        offset = timedelta(hours=int(m.group(2)), minutes=int(m.group(3)))
+        tz = timezone(sign * offset)
+        return tz, tz.tzname(None)  # 'UTC+05:30', or 'UTC' for +00:00
+    try:
+        return ZoneInfo(n), n
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        raise ValueError(f"unknown time zone {name!r}") from exc
+
+
+def _parse_unix(value: str, scale: int) -> datetime:
+    """Parse a numeric epoch (seconds/ms/us/ns by `scale`) as an aware UTC datetime."""
+    try:
+        num: float = float(value) if any(c in value for c in ".eE") else int(value)
+    except ValueError as exc:
+        raise ValueError(f"invalid unix timestamp: {value!r}") from exc
+    return datetime.fromtimestamp(num / scale, tz=timezone.utc)
+
+
+def _parse_iso(value: str) -> datetime:
+    """Parse ISO 8601 / RFC 3339, accepting a trailing 'Z' (the 3.10 floor lacks it)."""
+    v = value.strip()
+    if v[-1:] in ("Z", "z"):
+        v = v[:-1] + "+00:00"
+    return datetime.fromisoformat(v)
+
+
+def _parse_auto(value: str) -> tuple[datetime, str]:
+    """Sniff the format: numeric -> unix seconds, else ISO 8601, else RFC 2822/HTTP."""
+    v = value.strip()
+    if re.fullmatch(r"[+-]?\d+(\.\d+)?", v):
+        return _parse_unix(v, 1), "unix"
+    try:
+        return _parse_iso(v), "iso8601"
+    except ValueError:
+        pass
+    try:
+        return parsedate_to_datetime(v), "rfc2822"
+    except (ValueError, TypeError):
+        pass
+    raise ValueError(f"could not auto-detect a time format for {value!r}")
+
+
+def _parse_time(
+    value: str, from_format: str, format_pattern: str | None
+) -> tuple[datetime, str]:
+    """Parse `value` per `from_format`, returning (datetime, resolved_from_format)."""
+    if from_format == "auto":
+        return _parse_auto(value)
+    if from_format in _UNIX_SCALE:
+        return _parse_unix(value, _UNIX_SCALE[from_format]), from_format
+    if from_format == "iso8601":
+        try:
+            return _parse_iso(value), from_format
+        except ValueError as exc:
+            raise ValueError(f"invalid iso8601 timestamp: {value!r}") from exc
+    if from_format in ("rfc2822", "http"):
+        try:
+            return parsedate_to_datetime(value), from_format
+        except (ValueError, TypeError) as exc:
+            raise ValueError(f"invalid {from_format} timestamp: {value!r}") from exc
+    if from_format == "strftime":
+        if not format_pattern:
+            raise ValueError("from_format='strftime' requires `format_pattern`")
+        try:
+            return datetime.strptime(value, format_pattern), from_format
+        except ValueError as exc:
+            raise ValueError(
+                f"{value!r} does not match strftime pattern {format_pattern!r}"
+            ) from exc
+    raise ValueError(f"unknown from_format {from_format!r}")
+
+
+def _render_time(dt: datetime, to_format: str, format_pattern: str | None) -> str:
+    """Render an aware datetime as `to_format`."""
+    if to_format in _UNIX_SCALE:
+        return str(round(dt.timestamp() * _UNIX_SCALE[to_format]))
+    if to_format == "iso8601":
+        return dt.isoformat()
+    if to_format == "rfc2822":
+        return format_datetime(dt)
+    if to_format == "http":
+        return format_datetime(dt.astimezone(timezone.utc), usegmt=True)
+    if to_format == "strftime":
+        if not format_pattern:
+            raise ValueError("to_format='strftime' requires `format_pattern`")
+        return dt.strftime(format_pattern)
+    raise ValueError(f"unknown to_format {to_format!r}")
+
+
+def time_convert(
+    value: str,
+    to_format: ToTimeFormat,
+    from_format: FromTimeFormat = "auto",
+    from_zone: str = "UTC",
+    to_zone: str = "UTC",
+    format_pattern: str | None = None,
+) -> dict:
+    """Convert a timestamp between textual formats (ISO 8601/RFC 2822/HTTP/unix/strftime) and time zones.
+
+    Parses `value` per `from_format` (auto sniffs iso8601/rfc2822/http/unix),
+    anchors a NAIVE result with `from_zone` (an input that already carries an
+    offset ignores it), shifts the instant into `to_zone`, and renders it as
+    `to_format`. Formats: iso8601 (RFC 3339), rfc2822, http (IMF-fixdate, always
+    GMT), unix/unix_ms/unix_us/unix_ns epoch, and strftime (needs `format_pattern`
+    on whichever side uses it). Zones are an IANA name (Europe/Budapest), UTC, or
+    a ±HH:MM offset. Returns {result, from_format, to_format, zone, unix};
+    `from_format` echoes the detected format under auto, `unix` is the integer
+    epoch-seconds anchor.
+    """
+    dt, resolved_from = _parse_time(value, from_format, format_pattern)
+    if dt.tzinfo is None:  # anchor a naive input (no offset) with from_zone
+        from_tz, _ = _resolve_zone(from_zone)
+        dt = dt.replace(tzinfo=from_tz)
+
+    unix = int(dt.timestamp())  # canonical epoch-seconds anchor
+    if to_format == "http":  # HTTP-date is defined as GMT; to_zone does not apply
+        render_tz, zone_label = timezone.utc, "UTC"
+    else:
+        render_tz, zone_label = _resolve_zone(to_zone)
+    result = _render_time(dt.astimezone(render_tz), to_format, format_pattern)
+
+    return {
+        "result": result,
+        "from_format": resolved_from,
+        "to_format": to_format,
+        "zone": zone_label,
+        "unix": unix,
     }
 
 
@@ -1432,6 +1616,7 @@ def register(mcp) -> None:
     """Register the always-on stdlib tools against the FastMCP app."""
     mcp.tool()(num_convert)
     mcp.tool()(byte_order)
+    mcp.tool()(time_convert)
     mcp.tool()(hash)
     mcp.tool()(encode)
     mcp.tool()(decode)

@@ -528,6 +528,21 @@ Checkbox legend:  [ ] not started   [~] in progress   [x] done
                width: optional fixed field size (e.g. 2/4/8) — left-pads/groups
                       the bytes before swapping; defaults to the data length
                ret: {result, from_order, to_order, width, output_format}
+    [x] 18.6.  time_convert(value req, to_format req, from_format opt=auto,
+               from_zone opt=UTC, to_zone opt=UTC, format_pattern opt)
+               desc: Convert a timestamp between textual formats (ISO 8601 /
+                     RFC 3339, RFC 2822, HTTP-date, unix epoch s/ms/us/ns,
+                     strftime) and between time zones.
+               gate: stdlib   (datetime + zoneinfo + email.utils; IANA tz db
+                               from the OS — no deps on Linux)
+               from_format/to_format: iso8601 rfc2822 http unix unix_ms
+                       unix_us unix_ns | strftime (needs format_pattern)
+                       | auto (from_format only — sniff iso/rfc2822/http/unix)
+               from_zone: zone applied to a NAIVE input (no offset); ignored
+                       when the parsed value already carries one
+               to_zone:  shift the aware datetime into this zone before render
+               zones:    IANA name (Europe/Budapest) | UTC | ±HH:MM offset
+               ret: {result, from_format, to_format, zone, unix}
 
 
 [ ] 19.  VALIDATE  —  checksum / check-digit verification
