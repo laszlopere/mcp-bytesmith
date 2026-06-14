@@ -1678,6 +1678,54 @@ def string_unescape(
     return {"style": style, "result": unescaper(text)}
 
 
+# --- codepoints (§2.3.5 / §1.5.3) ---------------------------------------------
+# Explode text into its constituent Unicode scalars — the "what exactly is in
+# this string?" inspector. Iterating a Python str yields one code point per step
+# (astral characters included), so this never splits a surrogate pair. Each entry
+# carries the U+XXXX scalar, its Unicode name (or a <category> placeholder for the
+# unnamed Cc/Cf/Cs/Co/Cn ranges), and the big-endian UTF-8/16/32 byte view as hex
+# — handy for seeing how an emoji or combining mark actually lands on the wire.
+# `surrogatepass` keeps lone surrogates encodable rather than raising mid-scan.
+_CN_LABELS = {  # categories `unicodedata.name` has no name for
+    "Cc": "<control>",
+    "Cf": "<format>",
+    "Cs": "<surrogate>",
+    "Co": "<private-use>",
+    "Cn": "<unassigned>",
+}
+
+
+def _codepoint_name(ch: str) -> str:
+    name = unicodedata.name(ch, None)
+    if name is not None:
+        return name
+    cat = unicodedata.category(ch)
+    return _CN_LABELS.get(cat, f"<unnamed {cat}>")
+
+
+def codepoints(text: str) -> dict:
+    """Break text into its code points with names and UTF-8/16/32 byte views.
+
+    Returns one entry per Unicode scalar (astral characters stay whole): the
+    `char`, its `codepoint` as 'U+XXXX', the Unicode `name` (or a <category>
+    placeholder for unnamed control/format/private-use scalars), and big-endian
+    `utf8`/`utf16`/`utf32` byte views as hex. `count` is the code-point length,
+    which differs from len() only for surrogate-pair-bearing input.
+    """
+    chars = [
+        {
+            "char": ch,
+            "codepoint": f"U+{ord(ch):04X}",
+            "name": _codepoint_name(ch),
+            "utf8": ch.encode("utf-8", "surrogatepass").hex(),
+            "utf16": ch.encode("utf-16-be", "surrogatepass").hex(),
+            "utf32": ch.encode("utf-32-be", "surrogatepass").hex(),
+        }
+        for ch in text
+    ]
+    return {"count": len(chars), "chars": chars}
+
+
 # --- random (§2.5.1 / §1.11.4, merges random_bytes + random_token + passphrase)
 # All entropy comes from `secrets` (the CSPRNG), never `random`. The byte-derived
 # kinds (bytes/hex/urlsafe) are sized by `nbytes`; `token` is sized by character
@@ -1777,4 +1825,5 @@ def register(mcp) -> None:
     mcp.tool()(charset_transcode)
     mcp.tool()(string_escape)
     mcp.tool()(string_unescape)
+    mcp.tool()(codepoints)
     mcp.tool()(random)

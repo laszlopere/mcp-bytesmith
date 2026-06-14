@@ -30,7 +30,8 @@ digest, `hmac` computes and verifies keyed-hash authentication tags, and
 `bytes_edit` (pad/trim/slice/concat byte glue), `data_uri` (build and parse
 `data:` URIs), `unicode_normalize` and `charset_transcode` for text and
 character-set work, `string_escape`/`string_unescape` for JSON/JS/Python/C
-escaping, and `random` for CSPRNG-backed bytes, tokens, and passphrases.
+escaping, `codepoints` for per-scalar Unicode inspection, and `random` for
+CSPRNG-backed bytes, tokens, and passphrases.
 
 An opt-in **Ethereum/EVM toolset** (enabled via the `ethereum` extra) adds the
 primitives you reach for when working on-chain: `eth_hash` for keccak-256,

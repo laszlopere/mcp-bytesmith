@@ -347,7 +347,7 @@ Checkbox legend:  [ ] not started   [~] in progress   [x] done
                desc: Reverse a source-code or markup escaping back to the original text.
                gate: stdlib
                ret: {style, result}
-    [ ] 12.5.  codepoints(text req)                               -> §1.5.3
+    [x] 12.5.  codepoints(text req)                               -> §1.5.3
                desc: Break text into its code points with names and UTF-8/16/32 byte views.
                gate: stdlib   (inspection, but Unicode-specific)
                ret: {count, chars:[{char, codepoint:'U+XXXX', name,
