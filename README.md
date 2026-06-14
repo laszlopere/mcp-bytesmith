@@ -7,6 +7,7 @@
 [![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-db61a2.svg)](https://github.com/sponsors/laszlopere)
 [![mcp-bytesmith MCP server](https://glama.ai/mcp/servers/laszlopere/mcp-bytesmith/badges/score.svg)](https://glama.ai/mcp/servers/laszlopere/mcp-bytesmith)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![Checked with mypy](https://www.mypy-lang.org/static/mypy_badge.svg)](https://mypy-lang.org/)
 [![Last commit](https://img.shields.io/github/last-commit/laszlopere/mcp-bytesmith.svg)](https://github.com/laszlopere/mcp-bytesmith/commits)
 
 A pure-Python [Model Context Protocol](https://modelcontextprotocol.io) server,
