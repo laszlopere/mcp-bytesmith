@@ -190,6 +190,16 @@ Checkbox legend:  [ ] not started   [~] in progress   [x] done
               already had a GitHub Release when Glama first indexed it; bytesmith
               was indexed before its release existed. See mcp-kodi TODO 11.26 for
               the same glama.json + the Dockerfile path.
+              RESOLVED 2026-06-12 15:55: published Glama release 0.0.1 via the
+              admin Dockerfile page (Build & Release). Working build spec:
+                base image debian:trixie-slim, python 3.14
+                Build steps:  ["uv pip install --system --break-system-packages '.[ethereum]'"]
+                CMD arguments: ["mcp-bytesmith"]   (Glama wraps as mcp-proxy -- mcp-bytesmith)
+                Placeholder params: {}   (no creds needed to start)
+              GOTCHA: a plain `uv pip install --system` targets Debian's system
+              python (/usr, externally-managed PEP 668) and fails fast; the
+              `--break-system-packages` flag is required. Build passed in 10.6s,
+              answered ListToolsRequest, then created+published the release.
 
 
 [x] 9.  DEFINITION OF DONE  (acceptance check)
