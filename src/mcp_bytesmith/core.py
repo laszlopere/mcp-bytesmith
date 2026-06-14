@@ -43,6 +43,7 @@ from datetime import datetime, timedelta, timezone
 from email.header import decode_header, make_header
 from email.utils import format_datetime, parsedate_to_datetime
 from importlib.resources import files
+from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import quote, quote_plus, unquote_to_bytes
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -591,6 +592,104 @@ def hash(
     }
     if int_value is not None:
         result["int"] = int_value
+    return result
+
+
+# --- hash_file (§2.1.2, §1.1.8) ------------------------------------------------
+# Checksum a file on disk. Separate from hash() because it reads the filesystem
+# and offers soft-verify against an expected digest. Crypto digests stream the
+# file in chunks (bounded memory for large files); CRC/xxh/fnv read it whole.
+# shake_* is excluded — it needs a `length` this signature does not carry.
+_FILE_CHUNK = 1 << 20  # 1 MiB streaming read size
+
+FileHashAlgorithm = Literal[
+    "md5",
+    "sha1",
+    "sha224",
+    "sha256",
+    "sha384",
+    "sha512",
+    "sha3_256",
+    "sha3_512",
+    "blake2b",
+    "blake2s",
+    "crc8",
+    "crc16",
+    "crc32",
+    "crc32c",
+    "crc64",
+    "xxh32",
+    "xxh64",
+    "xxh3_64",
+    "xxh3_128",
+    "fnv1a_32",
+    "fnv1a_64",
+]
+
+
+def _parse_expected(expected: str, output_format: str) -> bytes:
+    """Decode an expected digest to bytes for comparison (tolerant of case/0x/ws)."""
+    text = expected.strip()
+    if output_format == "hex":
+        if text[:2].lower() == "0x":
+            text = text[2:]
+        try:
+            return bytes.fromhex(text)
+        except ValueError as exc:
+            raise ValueError(f"`expected` is not valid hex: {expected!r}") from exc
+    try:
+        return base64.b64decode(text, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError(f"`expected` is not valid base64: {expected!r}") from exc
+
+
+def hash_file(
+    path: str,
+    algorithm: FileHashAlgorithm = "sha256",
+    expected: str | None = None,
+    output_format: Literal["hex", "base64"] = "hex",
+) -> dict:
+    """Checksum a file on disk, optionally verifying it against an expected digest.
+
+    Crypto digests stream the file in 1 MiB chunks; CRC/xxh/fnv read it whole.
+    When `expected` is supplied, `verified` reports whether it matches the digest
+    (compared as bytes, so case/`0x`/whitespace differences are tolerated).
+    """
+    p = Path(path)
+    if not p.exists():
+        raise ValueError(f"file not found: {path}")
+    if not p.is_file():
+        raise ValueError(f"not a regular file: {path}")
+    size = p.stat().st_size
+
+    int_value: int | None = None
+    if algorithm in _CRYPTO:
+        h = hashlib.new(algorithm)  # blake2 keyless via new(); shake excluded above
+        with p.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(_FILE_CHUNK), b""):
+                h.update(chunk)
+        digest = h.digest()
+    elif algorithm in _CRC:
+        int_value = _crc(algorithm, p.read_bytes())
+        digest = int_value.to_bytes(_crc_byte_len(algorithm), "big")
+    elif algorithm in _XXH:
+        int_value = _xxh(algorithm, p.read_bytes(), 0)
+        digest = int_value.to_bytes(_XXH_BITS[algorithm] // 8, "big")
+    elif algorithm in _FNV:
+        bits = 32 if algorithm == "fnv1a_32" else 64
+        int_value = _fnv1a(p.read_bytes(), bits, None)
+        digest = int_value.to_bytes(bits // 8, "big")
+    else:
+        raise ValueError(f"unknown algorithm {algorithm!r}")
+
+    result = {
+        "algorithm": algorithm,
+        "digest": _render(digest, output_format),
+        "path": str(p),
+        "size": size,
+    }
+    if expected is not None:
+        result["verified"] = _parse_expected(expected, output_format) == digest
     return result
 
 
@@ -1618,6 +1717,7 @@ def register(mcp) -> None:
     mcp.tool()(byte_order)
     mcp.tool()(time_convert)
     mcp.tool()(hash)
+    mcp.tool()(hash_file)
     mcp.tool()(encode)
     mcp.tool()(decode)
     mcp.tool()(data_uri)

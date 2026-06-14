@@ -226,7 +226,7 @@ Checkbox legend:  [ ] not started   [~] in progress   [x] done
                           (length req for shake_*; key -> keyed BLAKE2;
                            seed -> xxh/fnv; CRC/xxh also report `int`)
                ret: {algorithm, digest, output_format, bits, int?}
-    [ ] 10.2.  hash_file(path req, algorithm opt=sha256, expected opt,
+    [x] 10.2.  hash_file(path req, algorithm opt=sha256, expected opt,
                output_format opt=hex)                       -> §1.1.8
                desc: Checksum a file on disk, optionally verifying it against an expected digest.
                gate: stdlib   (separate: reads the filesystem; soft-verify)
