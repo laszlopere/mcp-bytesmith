@@ -28,7 +28,9 @@ Toolset module contract (the pattern every gated toolset follows):
 
 import base64
 import json
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
+
+from pydantic import Field
 
 from mcp_bytesmith.core import _to_bytes
 
@@ -171,12 +173,44 @@ def _eip712_digest(typed_data: dict) -> tuple[bytes, bytes, bytes]:
 
 
 def eth_hash(
-    kind: Literal["keccak256", "eip191", "eip712"],
-    data: str,
-    input_format: Literal["text", "hex", "base64"] = "text",
-    output_format: Literal["hex", "base64"] = "hex",
+    kind: Annotated[
+        Literal["keccak256", "eip191", "eip712"],
+        Field(
+            description="Hash flavor: 'keccak256' (raw Ethereum keccak-256), "
+            "'eip191' (personal_sign prefixed message), or 'eip712' (typed-data "
+            "digest)."
+        ),
+    ],
+    data: Annotated[
+        str,
+        Field(
+            description="Polymorphic: for keccak256/eip191 it is the message bytes "
+            "decoded per input_format; for eip712 it is the typed-data JSON object "
+            "(a JSON string or already-parsed dict with types/primaryType/domain/"
+            "message) and input_format is ignored."
+        ),
+    ],
+    input_format: Annotated[
+        Literal["text", "hex", "base64"],
+        Field(
+            description="How to decode `data` to bytes for keccak256/eip191 "
+            "(ignored for eip712); hex is 0x-prefixed or bare."
+        ),
+    ] = "text",
+    output_format: Annotated[
+        Literal["hex", "base64"],
+        Field(description="Digest encoding: 'hex' is 0x-prefixed, or 'base64'."),
+    ] = "hex",
 ) -> dict:
-    """Compute an Ethereum hash: raw keccak-256, EIP-191, or EIP-712 typed-data."""
+    """Compute an Ethereum hash: raw keccak-256, EIP-191, or EIP-712 typed-data.
+
+    Returns {kind, hash}. For kind=eip712 the result also carries
+    {domain_separator, struct_hash}, the two EIP-712 component hashes. Note
+    keccak-256 is the pre-NIST Ethereum variant, not hashlib's SHA3-256.
+
+    Example: eth_hash("keccak256", "hello", "text") ->
+    hash="0x1c8aff950685c2ed4bc3174f3472287b56d9517b9c948127319a09a7a36deac8".
+    """
     if kind == "keccak256":
         digest = _keccak256(_to_bytes(data, input_format))
         return {"kind": kind, "hash": _from_bytes(digest, output_format)}
@@ -287,9 +321,29 @@ def _canonical_signature(signature: str) -> str:
 
 
 def eth_selector(
-    signature: str, kind: Literal["function", "event"] = "function"
+    signature: Annotated[
+        str,
+        Field(
+            description="A Solidity function/event signature, e.g. "
+            "'transfer(address,uint256)'; parameter names, data locations, and "
+            "type aliases (uint->uint256) are normalized to canonical ABI form."
+        ),
+    ],
+    kind: Annotated[
+        Literal["function", "event"],
+        Field(
+            description="'function' returns the 4-byte selector; 'event' returns "
+            "the 32-byte topic0 (keccak of the canonical signature)."
+        ),
+    ] = "function",
 ) -> dict:
-    """Derive the 4-byte function selector or 32-byte event topic from a signature."""
+    """Derive the 4-byte function selector or 32-byte event topic from a signature.
+
+    Returns {kind, signature (canonicalized), selector} for functions, or
+    {kind, signature, topic0} for events.
+
+    Example: eth_selector("transfer(address,uint256)") -> selector="0xa9059cbb".
+    """
     canonical = _canonical_signature(signature)
     digest = _keccak256(canonical.encode("ascii"))
     if kind == "function":
@@ -383,7 +437,20 @@ def _rlp_decode_item(data: bytes, pos: int) -> tuple[Any, int]:
     return items, end
 
 
-def rlp_codec(action: Literal["encode", "decode"], data: Any) -> dict:
+def rlp_codec(
+    action: Annotated[
+        Literal["encode", "decode"],
+        Field(description="'encode' structured data to RLP, or 'decode' a hex RLP."),
+    ],
+    data: Annotated[
+        Any,
+        Field(
+            description="On encode: a leaf (0x-hex string or non-negative integer) "
+            "or a (possibly nested) JSON array of items; a stringified JSON array "
+            "is parsed. On decode: a 0x-prefixed hex string of the RLP payload."
+        ),
+    ],
+) -> dict:
     """RLP-encode structured data, or RLP-decode a hex string.
 
     Encode `data` is a recursive structure: a leaf (hex string, or a non-negative
@@ -391,6 +458,8 @@ def rlp_codec(action: Literal["encode", "decode"], data: Any) -> dict:
     a JSON-array string is parsed too. action=encode -> {encoded:'0x...'}.
     Decode `data` is a 0x-hex string; action=decode -> {decoded} with leaves as
     0x-hex and lists as arrays.
+
+    Example: rlp_codec("encode", ["0x636174"]) -> encoded="0xc483636174".
     """
     if action == "encode":
         item = data
@@ -608,11 +677,41 @@ def _abi_dec_tuple(types: list, data: bytes, base: int) -> list:
 
 
 def abi_codec(
-    action: Literal["encode", "decode"],
-    types: list[str],
-    values: list | None = None,
-    data: str | None = None,
-    mode: Literal["standard", "packed"] = "standard",
+    action: Annotated[
+        Literal["encode", "decode"],
+        Field(description="'encode' values to ABI bytes, or 'decode' ABI bytes."),
+    ],
+    types: Annotated[
+        list[str],
+        Field(
+            description="List of ABI type strings, e.g. "
+            '["uint256","address","(uint8,bytes)[]"]; aliases uint/int/byte are '
+            "normalized. A stringified JSON array is accepted."
+        ),
+    ],
+    values: Annotated[
+        list | None,
+        Field(
+            description="Values to encode (required for action=encode), positionally "
+            "matching `types`; ints accept int/decimal/0x-hex, bytes are 0x-hex, "
+            "addresses are 0x-hex. A stringified JSON array is accepted."
+        ),
+    ] = None,
+    data: Annotated[
+        str | None,
+        Field(
+            description="0x-prefixed ABI-encoded bytes to decode (required for "
+            "action=decode)."
+        ),
+    ] = None,
+    mode: Annotated[
+        Literal["standard", "packed"],
+        Field(
+            description="'standard' head/tail ABI encoding, or 'packed' "
+            "(abi.encodePacked: tight, no padding/length prefixes) — packed is "
+            "encode-only as it is not uniquely decodable."
+        ),
+    ] = "standard",
 ) -> dict:
     """ABI-encode values or ABI-decode call/return/log data.
 
@@ -622,6 +721,9 @@ def abi_codec(
     abi.encodePacked (tight, no padding) and is encode-only. action=decode
     (needs `data`, standard only) -> {values}; ints are returned as decimal
     strings and addresses EIP-55 checksummed.
+
+    Example: abi_codec("encode", ["uint256"], [69]) -> encoded="0x00..0045"
+    (the 32-byte word 0x...0045).
     """
     type_list = json.loads(types) if isinstance(types, str) else types
     if not isinstance(type_list, list):
@@ -687,7 +789,30 @@ def _storage_result(slot_int: int) -> dict:
 
 
 def eth_storage_slot(
-    layout: dict[str, Any], key: Any = None, index: int | None = None
+    layout: Annotated[
+        dict[str, Any],
+        Field(
+            description='Layout object: {"kind":"mapping"|"dynamic_array", "slot":'
+            ' <declared base slot, int/decimal/0x-hex>, ...}. mapping takes optional'
+            ' "key_type" (default "uint256"; lists for nested mappings); '
+            'dynamic_array takes optional "element_size" in slots (default 1). A '
+            "stringified JSON object is accepted."
+        ),
+    ],
+    key: Annotated[
+        Any,
+        Field(
+            description="Mapping key (required for kind=mapping); pass a list of "
+            "keys outer-to-inner for nested mappings. Ignored for arrays."
+        ),
+    ] = None,
+    index: Annotated[
+        int | None,
+        Field(
+            description="Element index (required for kind=dynamic_array); "
+            "int/decimal/0x-hex. Ignored for mappings."
+        ),
+    ] = None,
 ) -> dict:
     """Compute the storage slot for a mapping/array entry given a layout.
 
@@ -695,7 +820,11 @@ def eth_storage_slot(
       mapping       -> needs `key`; "key_type" (default uint256). For nested
                        mappings pass `key` (and optionally "key_type") as lists.
       dynamic_array -> needs `index`; optional "element_size" in slots (default 1).
-    Returns the slot both as a decimal string and a 0x 32-byte hex word.
+    Returns {slot, slot_hex}: the slot as a decimal string and a 0x 32-byte word.
+
+    Example: eth_storage_slot({"kind":"mapping","slot":1},
+    "0x0000000000000000000000000000000000000000") ->
+    slot_hex="0xa6eef7e35abe7026729641147f7915573c7e97b47efa546f5f6e3230263bcb49".
     """
     spec = json.loads(layout) if isinstance(layout, str) else layout
     try:
@@ -1014,9 +1143,29 @@ def _tx_decode(data: str) -> dict:
 
 
 def eth_tx_codec(
-    action: Literal["encode", "decode"],
-    data: str | None = None,
-    fields: dict | None = None,
+    action: Annotated[
+        Literal["encode", "decode"],
+        Field(
+            description="'encode' signed fields into a raw tx, or 'decode' a raw tx."
+        ),
+    ],
+    data: Annotated[
+        str | None,
+        Field(
+            description="0x-prefixed raw transaction bytes to decode (required for "
+            "action=decode): a legacy RLP list or an EIP-2718 typed envelope."
+        ),
+    ] = None,
+    fields: Annotated[
+        dict | None,
+        Field(
+            description="Already-signed tx fields object (required for "
+            "action=encode); does NOT sign. The type comes from a `type` key or is "
+            "inferred (maxFeePerGas->1559, blobVersionedHashes->4844, "
+            "accessList->2930, else legacy). Numbers accept int/decimal/0x-hex; "
+            "`to`/`data` are 0x-hex. A stringified JSON object is accepted."
+        ),
+    ] = None,
 ) -> dict:
     """Serialize signed tx fields into a raw transaction, or decode a raw tx.
 
@@ -1028,6 +1177,10 @@ def eth_tx_codec(
     action=decode (needs `data`, a 0x-hex raw tx) -> {type, fields, hash, from},
     recovering `from` from the signature; numeric fields come back as decimal
     strings, addresses EIP-55 checksummed.
+
+    Example: eth_tx_codec("encode", fields={"nonce":0,"gasPrice":"0x09184e72a000",
+    "gasLimit":"0x2710","to":"0x00..00","value":0,"data":"0x"}) -> type=0,
+    raw="0xe5808609184e72a00082271094...808080".
     """
     if action == "encode":
         spec = json.loads(fields) if isinstance(fields, str) else fields
@@ -1047,8 +1200,33 @@ def eth_tx_codec(
     raise ValueError(f"unknown action {action!r}; expected 'encode' or 'decode'")
 
 
-def eth_address_case(action: Literal["encode", "verify"], address: str) -> dict:
-    """Apply or verify an EIP-55 mixed-case address checksum."""
+def eth_address_case(
+    action: Annotated[
+        Literal["encode", "verify"],
+        Field(
+            description="'encode' applies the EIP-55 checksum casing; 'verify' "
+            "checks whether the input's casing already matches it."
+        ),
+    ],
+    address: Annotated[
+        str,
+        Field(
+            description="A 20-byte hex address, 40 hex chars with or without a 0x "
+            "prefix; any casing is accepted (verify compares the given casing "
+            "against the EIP-55 checksum)."
+        ),
+    ],
+) -> dict:
+    """Apply or verify an EIP-55 mixed-case address checksum.
+
+    action=encode -> {action, address} with the checksummed (mixed-case) address.
+    action=verify -> {action, address (checksummed), valid}, plus a `reason` when
+    the supplied casing does not match the EIP-55 checksum.
+
+    Example: eth_address_case("encode",
+    "0x52908400098527886e0f7030069857d2e4169ee7") ->
+    address="0x52908400098527886E0F7030069857D2E4169EE7".
+    """
     body = address[2:] if address[:2].lower() == "0x" else address
     if len(body) != 40 or any(ch not in _HEX for ch in body):
         raise ValueError(f"not a 20-byte hex address (need 40 hex chars): {address!r}")
@@ -1070,8 +1248,28 @@ def eth_address_case(action: Literal["encode", "verify"], address: str) -> dict:
 # leftmost label (the .eth registrar token id for that name). The name is hashed
 # as given — EIP-137 expects it already UTS-46 normalized (use unicode_normalize
 # first if needed); empty labels (leading/trailing/double dots) are rejected.
-def ens_namehash(name: str) -> dict:
-    """Compute the EIP-137 namehash (and labelhash) of an ENS name."""
+def ens_namehash(
+    name: Annotated[
+        str,
+        Field(
+            description="A dot-separated ENS name, e.g. 'vitalik.eth' (''=the root). "
+            "EIP-137 expects it ALREADY UTS-46 normalized — run unicode_normalize "
+            "first if it may contain uppercase/unicode. Empty labels (leading/"
+            "trailing/double dots) are rejected."
+        ),
+    ],
+) -> dict:
+    """Compute the EIP-137 namehash (and labelhash) of an ENS name.
+
+    The name is hashed exactly as given; EIP-137 expects it already UTS-46
+    normalized (use unicode_normalize first if needed), and empty labels from a
+    stray dot are rejected. Returns {name, namehash, labelhash}, where labelhash
+    is the keccak of the leftmost label — for a single label that is the .eth
+    registrar token id for that name.
+
+    Example: ens_namehash("vitalik.eth") ->
+    namehash="0xee6c4522aab0003e8d14cd40a6af439055fd2577951148c14b6cea9a53475835".
+    """
     node = b"\x00" * 32
     labels = name.split(".") if name else []
     if any(label == "" for label in labels):

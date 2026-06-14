@@ -17,7 +17,7 @@
 """Structured-serialization toolset — gated on the `serialize` extra (TODO 11.9 / plan §1.17).
 
 One multiplexed `serialize_codec(format, action, data, options)` tool dispatches
-across the schemaless "RLP-family" binary serializers by `format`, mirroring how
+across the schemaless binary serializers by `format`, mirroring how
 `core.encode`/`decode` dispatch on `scheme` — so we avoid six near-identical
 encode/decode tools. RLP and ABI keep their own ethereum codecs (11.5-11.6).
 
@@ -33,7 +33,9 @@ Toolset module contract (the pattern every gated toolset follows):
 """
 
 import json
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
+
+from pydantic import Field
 
 from mcp_bytesmith.core import _to_bytes
 
@@ -199,12 +201,24 @@ def _protobuf_chunk(chunk: bytes) -> Any:
 
 # --- the multiplexed tool ------------------------------------------------------
 def serialize_codec(
-    format: Literal["cbor", "msgpack", "bencode", "protobuf"],
-    action: Literal["encode", "decode"],
-    data: Any = None,
-    options: dict[str, Any] | None = None,
+    format: Annotated[
+        Literal["cbor", "msgpack", "bencode", "protobuf"],
+        Field(description="Serializer: cbor, msgpack, bencode (encode+decode), or protobuf (decode-only raw wire)."),
+    ],
+    action: Annotated[
+        Literal["encode", "decode"],
+        Field(description="encode a JSON value to hex, or decode a hex string back to a value."),
+    ],
+    data: Annotated[
+        Any,
+        Field(description="When encoding, the JSON value (string starting with { or [ is parsed as JSON); when decoding, a hex string (0x prefix optional)."),
+    ] = None,
+    options: Annotated[
+        dict[str, Any] | None,
+        Field(description="Reserved for future per-format typing (e.g. an ssz schema); currently unused."),
+    ] = None,
 ) -> dict:
-    """Encode / decode schemaless structured data across the RLP-family serializers.
+    """Encode / decode schemaless structured data across these binary serializers.
 
     ONE codec multiplexed by `format` (cf. encode/decode's scheme dispatch):
       cbor (RFC 8949) | msgpack | bencode  — encode + decode
@@ -212,12 +226,19 @@ def serialize_codec(
 
     Encode `data` is a JSON value (object/array/string/number/bool/null); a string
     that begins with `{` or `[` is parsed as JSON (clients sometimes stringify
-    structures). action=encode -> {encoded} as bare lowercase hex.
-    Decode `data` is a hex string (an optional 0x prefix is accepted).
-    action=decode -> {decoded}. For protobuf, `decoded` is a list of
-    {field, wire_type, value} entries (repeated fields appear more than once);
-    bencode/protobuf byte-strings render as UTF-8 text when valid, else hex.
-    `options` is reserved for per-format typing (e.g. a future ssz schema).
+    structures). Decode `data` is a hex string (an optional 0x prefix is accepted).
+
+    Returns include the echoed `format` and `action`, plus the payload key:
+      action=encode -> {format, action, encoded} where `encoded` is bare lowercase hex.
+      action=decode -> {format, action, decoded}. For protobuf, `decoded` is a list of
+        {field, wire_type, value} entries (repeated fields appear more than once);
+        bencode/protobuf byte-strings render as UTF-8 text when valid, else hex.
+    Example: serialize_codec("cbor","encode",[1,2,3])
+      -> {"format":"cbor","action":"encode","encoded":"83010203"}
+
+    Errors: protobuf rejects encode (decode-only); bencode rejects booleans (use
+    0/1) and requires string dict keys; action=decode requires a hex string `data`.
+    `options` is reserved (per-format typing, e.g. a future ssz schema) and unused.
     """
     opts = json.loads(options) if isinstance(options, str) else (options or {})
     if not isinstance(opts, dict):

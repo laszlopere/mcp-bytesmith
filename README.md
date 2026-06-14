@@ -42,6 +42,12 @@ for EIP-55 checksums, and `ens_namehash` for EIP-137 ENS namehash/labelhash. An
 always-available `info` tool reports which toolsets are
 active along with version information.
 
+An opt-in **serialization toolset** (enabled via the `serialize` extra) adds
+`serialize_codec`, a single tool that encodes and decodes schemaless structured
+data across CBOR, MessagePack, and bencode, and decodes raw protobuf wire format
+(protobuf is decode-only — without a `.proto` schema it surfaces field numbers,
+wire types, and values rather than field names).
+
 Further toolsets (crypto, IDs, validation) are on the roadmap — see [`TODO`](./TODO).
 
 ## Development

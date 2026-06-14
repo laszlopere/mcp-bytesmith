@@ -45,9 +45,11 @@ from email.header import decode_header, make_header
 from email.utils import format_datetime, parsedate_to_datetime
 from importlib.resources import files
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from urllib.parse import quote, quote_plus, unquote_to_bytes
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from pydantic import Field
 
 
 # Upper bound on caller-controlled output sizes (SHAKE digest length, hexdump
@@ -97,10 +99,26 @@ _BITS_PER_DIGIT = {"hex": 4, "bin": 1, "oct": 3}
 
 
 def num_convert(
-    value: str,
-    from_base: Literal["hex", "dec", "bin", "oct"],
-    to_base: Literal["hex", "dec", "bin", "oct"],
-    pad_bytes: int | None = None,
+    value: Annotated[
+        str,
+        Field(description="Integer to convert, read in `from_base`; a leading "
+        "0x/0b/0o radix prefix and a '-' sign are accepted."),
+    ],
+    from_base: Annotated[
+        Literal["hex", "dec", "bin", "oct"],
+        Field(description="Base of `value`: hex (16), dec (10), bin (2), oct (8)."),
+    ],
+    to_base: Annotated[
+        Literal["hex", "dec", "bin", "oct"],
+        Field(description="Base to render the result in; non-decimal output is "
+        "prefixed 0x/0b/0o."),
+    ],
+    pad_bytes: Annotated[
+        int | None,
+        Field(description="Zero-fill the output to this byte width (a minimum, "
+        "never truncating); bit-aligned, so rejected for decimal output. Default "
+        "None means no padding."),
+    ] = None,
 ) -> dict:
     """Convert a big-integer between bases (hex/dec/bin/oct).
 
@@ -109,6 +127,8 @@ def num_convert(
     `pad_bytes` zero-fills the output to that byte width (a minimum, never
     truncating); it is bit-aligned, so it is rejected for decimal output.
     Arbitrary precision — a 32-byte RPC value converts losslessly.
+    Returns {value, from_base, to_base, result}.
+    Example: num_convert("255", "dec", "hex") -> result "0xff"
     """
     if from_base not in _RADIX:
         raise ValueError(f"unknown from_base {from_base!r}; expected hex|dec|bin|oct")
@@ -165,12 +185,35 @@ def _resolve_byte_order(order: str) -> str:
 
 
 def byte_order(
-    data: str,
-    from_order: ByteOrder,
-    to_order: ByteOrder,
-    width: int | None = None,
-    input_format: Literal["text", "hex", "base64"] = "hex",
-    output_format: Literal["hex", "base64"] = "hex",
+    data: Annotated[
+        str,
+        Field(description="Hex byte buffer (0x-prefix optional) to byte-swap, "
+        "treated as a sequence of fixed-size `width`-byte fields."),
+    ],
+    from_order: Annotated[
+        ByteOrder,
+        Field(description="Current byte order of `data`: little|big|network|host "
+        "(network=big-endian, host=platform's sys.byteorder)."),
+    ],
+    to_order: Annotated[
+        ByteOrder,
+        Field(description="Target byte order: little|big|network|host. Differing "
+        "orders reverse each field; equal orders only apply width normalization."),
+    ],
+    width: Annotated[
+        int | None,
+        Field(description="Fixed field size in bytes: a shorter buffer is left "
+        "zero-padded up to it, a longer one is split into width-byte groups each "
+        "swapped independently. Default None swaps the whole buffer as one field."),
+    ] = None,
+    input_format: Annotated[
+        Literal["text", "hex", "base64"],
+        Field(description="How `data` is decoded to bytes; default 'hex'."),
+    ] = "hex",
+    output_format: Annotated[
+        Literal["hex", "base64"],
+        Field(description="How `result` is rendered; default 'hex'."),
+    ] = "hex",
 ) -> dict:
     """Convert a value between host and network byte order (htons/htonl/ntohs/ntohl).
 
@@ -183,6 +226,7 @@ def byte_order(
     swap the whole buffer as one field. Differing orders reverse each field; equal
     orders only apply the width normalization. Returns {result, from_order,
     to_order, width, output_format}; `result` is rendered via `output_format`.
+    Example: byte_order("0x12345678", "little", "big") -> result "78563412"
     """
     raw = _to_bytes(data, input_format)
     src = _resolve_byte_order(from_order)
@@ -363,12 +407,37 @@ def _render_time(dt: datetime, to_format: str, format_pattern: str | None) -> st
 
 
 def time_convert(
-    value: str,
-    to_format: ToTimeFormat,
-    from_format: FromTimeFormat = "auto",
-    from_zone: str = "UTC",
-    to_zone: str = "UTC",
-    format_pattern: str | None = None,
+    value: Annotated[
+        str,
+        Field(description="Timestamp to convert, parsed per `from_format`."),
+    ],
+    to_format: Annotated[
+        ToTimeFormat,
+        Field(description="Output format: iso8601 (RFC 3339), rfc2822, http "
+        "(IMF-fixdate, always GMT), unix/unix_ms/unix_us/unix_ns epoch, or "
+        "strftime (needs `format_pattern`)."),
+    ],
+    from_format: Annotated[
+        FromTimeFormat,
+        Field(description="Format of `value`; default 'auto' sniffs "
+        "iso8601/rfc2822/http/unix. strftime needs `format_pattern`."),
+    ] = "auto",
+    from_zone: Annotated[
+        str,
+        Field(description="Zone anchoring a naive input (no offset): an IANA name "
+        "(Europe/Budapest), UTC, or a ±HH:MM offset. Default 'UTC'. Ignored when "
+        "the input already carries an offset."),
+    ] = "UTC",
+    to_zone: Annotated[
+        str,
+        Field(description="Zone to shift the instant into before rendering; IANA "
+        "name, UTC, or ±HH:MM offset. Default 'UTC'. Ignored for http (always GMT)."),
+    ] = "UTC",
+    format_pattern: Annotated[
+        str | None,
+        Field(description="strptime/strftime pattern, required on whichever side "
+        "(from_format/to_format) is 'strftime'. Default None."),
+    ] = None,
 ) -> dict:
     """Convert a timestamp between textual formats (ISO 8601/RFC 2822/HTTP/unix/strftime) and time zones.
 
@@ -381,6 +450,8 @@ def time_convert(
     a ±HH:MM offset. Returns {result, from_format, to_format, zone, unix};
     `from_format` echoes the detected format under auto, `unix` is the integer
     epoch-seconds anchor.
+    Example: time_convert("1700000000", "iso8601") -> result
+    "2023-11-14T22:13:20+00:00"
     """
     dt, resolved_from = _parse_time(value, from_format, format_pattern)
     if dt.tzinfo is None:  # anchor a naive input (no offset) with from_zone
@@ -536,19 +607,48 @@ def _crypto_digest(name: str, data: bytes, key: bytes | None) -> bytes:
 
 
 def hash(
-    data: str,
-    algorithm: HashAlgorithm,
-    input_format: Literal["text", "hex", "base64"] = "text",
-    output_format: Literal["hex", "base64"] = "hex",
-    length: int | None = None,
-    key: str | None = None,
-    seed: int | None = None,
+    data: Annotated[
+        str,
+        Field(description="Input to hash, decoded to bytes via `input_format`."),
+    ],
+    algorithm: Annotated[
+        HashAlgorithm,
+        Field(description="Digest algorithm: crypto (md5/sha1/sha2/sha3/blake2*), "
+        "shake_128/shake_256 (need `length`), CRC (crc8/16/32/32c/64), xxhash "
+        "(xxh32/64/3_64/3_128), or fnv1a_32/fnv1a_64."),
+    ],
+    input_format: Annotated[
+        Literal["text", "hex", "base64"],
+        Field(description="How `data` (and `key`) are decoded; default 'text'."),
+    ] = "text",
+    output_format: Annotated[
+        Literal["hex", "base64"],
+        Field(description="How the digest is rendered (bare hex, no 0x); default "
+        "'hex'."),
+    ] = "hex",
+    length: Annotated[
+        int | None,
+        Field(description="Output length in bytes, required for shake_128/shake_256 "
+        "and invalid otherwise. Default None."),
+    ] = None,
+    key: Annotated[
+        str | None,
+        Field(description="Key for blake2b/blake2s only, decoded with "
+        "`input_format`. Default None."),
+    ] = None,
+    seed: Annotated[
+        int | None,
+        Field(description="Seed reseeding xxh*/fnv1a_* only. Default None."),
+    ] = None,
 ) -> dict:
     """Compute a cryptographic, CRC, or fast non-crypto digest of bytes.
 
     `length` (output bytes) is required for shake_*; `key` keys blake2b/blake2s
-    (decoded with `input_format`); `seed` reseeds xxh*/fnv1a_*. CRC and fast
-    hashes additionally report their integer value as `int`.
+    (decoded with `input_format`); `seed` reseeds xxh*/fnv1a_*.
+    Returns {algorithm, digest, output_format, bits}; CRC and fast hashes
+    additionally report their integer value as `int`.
+    Example: hash("abc", "sha256") -> digest
+    "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
     """
     raw = _to_bytes(data, input_format)
     keyb = _to_bytes(key, input_format) if key is not None else None
@@ -645,16 +745,35 @@ def _parse_expected(expected: str, output_format: str) -> bytes:
 
 
 def hash_file(
-    path: str,
-    algorithm: FileHashAlgorithm = "sha256",
-    expected: str | None = None,
-    output_format: Literal["hex", "base64"] = "hex",
+    path: Annotated[
+        str,
+        Field(description="Filesystem path of the file to checksum."),
+    ],
+    algorithm: Annotated[
+        FileHashAlgorithm,
+        Field(description="Digest algorithm: crypto (md5/sha1/sha2/sha3/blake2*), "
+        "CRC (crc8/16/32/32c/64), xxhash, or fnv1a_*. shake_* is excluded (no "
+        "`length` arg). Default 'sha256'."),
+    ] = "sha256",
+    expected: Annotated[
+        str | None,
+        Field(description="Expected digest to verify against, in `output_format`; "
+        "case/`0x`/whitespace tolerated. Default None skips verification."),
+    ] = None,
+    output_format: Annotated[
+        Literal["hex", "base64"],
+        Field(description="How the digest is rendered (bare hex, no 0x); default "
+        "'hex'."),
+    ] = "hex",
 ) -> dict:
     """Checksum a file on disk, optionally verifying it against an expected digest.
 
     Crypto digests stream the file in 1 MiB chunks; CRC/xxh/fnv read it whole.
     When `expected` is supplied, `verified` reports whether it matches the digest
     (compared as bytes, so case/`0x`/whitespace differences are tolerated).
+    Returns {algorithm, digest, path, size}, plus `verified` when `expected` is
+    given.
+    Example: hash_file("/etc/hostname", "sha256") -> {digest, path, size, ...}
     """
     p = Path(path)
     if not p.exists():
@@ -713,19 +832,46 @@ HmacAlgorithm = Literal[
 
 
 def hmac(
-    data: str,
-    key: str,
-    algorithm: HmacAlgorithm = "sha256",
-    input_format: Literal["text", "hex", "base64"] = "text",
-    key_format: Literal["text", "hex", "base64"] = "text",
-    output_format: Literal["hex", "base64"] = "hex",
-    expected: str | None = None,
+    data: Annotated[
+        str,
+        Field(description="Message to authenticate, decoded via `input_format`."),
+    ],
+    key: Annotated[
+        str,
+        Field(description="Secret key, decoded via `key_format`."),
+    ],
+    algorithm: Annotated[
+        HmacAlgorithm,
+        Field(description="Underlying cryptographic hash (HMAC digestmod): "
+        "md5/sha1/sha2*/sha3*/blake2*. Default 'sha256'."),
+    ] = "sha256",
+    input_format: Annotated[
+        Literal["text", "hex", "base64"],
+        Field(description="How `data` is decoded to bytes; default 'text'."),
+    ] = "text",
+    key_format: Annotated[
+        Literal["text", "hex", "base64"],
+        Field(description="How `key` is decoded to bytes; default 'text'."),
+    ] = "text",
+    output_format: Annotated[
+        Literal["hex", "base64"],
+        Field(description="How the tag is rendered (bare hex, no 0x); default "
+        "'hex'."),
+    ] = "hex",
+    expected: Annotated[
+        str | None,
+        Field(description="Expected tag to verify against, in `output_format`; "
+        "case/`0x`/whitespace tolerated, compared constant-time. Default None "
+        "skips verification."),
+    ] = None,
 ) -> dict:
     """Compute or verify an HMAC authentication tag over data with a secret key.
 
     `data` and `key` are decoded with `input_format` / `key_format`. When
     `expected` is supplied, `valid` reports a constant-time comparison against the
     computed tag (tolerant of case/`0x`/whitespace in the expected value).
+    Returns {algorithm, mac, output_format}, plus `valid` when `expected` is given.
+    Example: hmac("msg", "key") -> mac "2d93cbc1be167bcb1637a4a23cbff01a..."
     """
     raw = _to_bytes(data, input_format)
     keyb = _to_bytes(key, key_format)
@@ -918,10 +1064,27 @@ def _encode_extra(scheme: str) -> Any:
 
 
 def encode(
-    data: str,
-    scheme: EncodeScheme,
-    input_format: Literal["text", "hex", "base64"] = "text",
-    options: dict[str, Any] | None = None,
+    data: Annotated[
+        str,
+        Field(description="Input to encode, decoded to bytes via `input_format` "
+        "(idna/bytes32 read it as text)."),
+    ],
+    scheme: Annotated[
+        EncodeScheme,
+        Field(description="Target encoding: base16/32/32hex/32crockford/45/58/"
+        "58check/62/64/64url, ascii85/base85/z85, url/url_form (percent), idna, "
+        "bech32/bech32m, hexdump, or bytes32 (32-byte EVM word)."),
+    ],
+    input_format: Annotated[
+        Literal["text", "hex", "base64"],
+        Field(description="How `data` is decoded to bytes; default 'text'."),
+    ] = "text",
+    options: Annotated[
+        dict[str, Any] | None,
+        Field(description="Per-scheme options: padding (bool, base32/64 family), "
+        "alphabet (base58/62), hrp (required for bech32/bech32m), width (hexdump, "
+        "default 16). Default None."),
+    ] = None,
 ) -> dict:
     """Encode bytes/text into a string form (base-N, URL, IDNA, bech32, hexdump, bytes32).
 
@@ -933,6 +1096,8 @@ def encode(
     a fixed-width 32-byte EVM word: inputs of <32 bytes are right-padded with
     0x00; decode returns all 32 bytes (it does NOT strip trailing nulls, so the
     round-trip is lossless — rstrip them yourself for a short string).
+    Returns {scheme, encoded}.
+    Example: encode("hello", "base64") -> encoded "aGVsbG8="
     """
     opts = json.loads(options) if isinstance(options, str) else (options or {})
     if not isinstance(opts, dict):
@@ -1097,18 +1262,37 @@ def _hexdump_decode(text: str) -> bytes:
 
 
 def decode(
-    data: str,
-    scheme: EncodeScheme,
-    output_format: Literal["text", "hex", "base64"] = "text",
-    options: dict[str, Any] | None = None,
+    data: Annotated[
+        str,
+        Field(description="Encoded string to decode, in `scheme`'s format."),
+    ],
+    scheme: Annotated[
+        EncodeScheme,
+        Field(description="Source encoding (same set as `encode`): base16/32/.../"
+        "64url, ascii85/base85/z85, url/url_form, idna, bech32/bech32m, hexdump, "
+        "or bytes32."),
+    ],
+    output_format: Annotated[
+        Literal["text", "hex", "base64"],
+        Field(description="How recovered bytes are rendered: text=UTF-8, hex=bare "
+        "(no 0x), base64. Default 'text'; pick hex/base64 for non-UTF-8 payloads."),
+    ] = "text",
+    options: Annotated[
+        dict[str, Any] | None,
+        Field(description="Per-scheme options: alphabet (base58/base62). Default "
+        "None."),
+    ] = None,
 ) -> dict:
     """Decode a base-N/URL/IDNA/bech32/hexdump string back to bytes or text.
 
     The inverse of `encode` over the same scheme set. The recovered bytes are
     rendered per `output_format` (text=UTF-8 | hex=bare, no 0x | base64); pick
     hex/base64 for binary payloads that are not valid UTF-8. `options` carries
-    `alphabet` for base58/base62. bech32/bech32m additionally return their `hrp`.
-    base58/base58check/base45/idna need the `encoding` extra.
+    `alphabet` for base58/base62. base58/base58check/base45/idna need the
+    `encoding` extra.
+    Returns {scheme, decoded, output_format}; bech32/bech32m additionally return
+    their `hrp`.
+    Example: decode("aGVsbG8=", "base64") -> decoded "hello"
     """
     opts = json.loads(options) if isinstance(options, str) else (options or {})
     if not isinstance(opts, dict):
@@ -1189,13 +1373,40 @@ def _b64decode(text: str) -> bytes:
 
 
 def data_uri(
-    action: Literal["build", "parse"],
-    media_type: str | None = None,
-    data: str | None = None,
-    base64: bool = True,
-    uri: str | None = None,
-    input_format: Literal["text", "hex", "base64"] = "text",
-    output_format: Literal["text", "hex", "base64"] = "text",
+    action: Annotated[
+        Literal["build", "parse"],
+        Field(description="'build' wraps a payload into a data: URI (needs `data`); "
+        "'parse' splits a URI into its parts (needs `uri`)."),
+    ],
+    media_type: Annotated[
+        str | None,
+        Field(description="MIME type for build, e.g. 'text/plain' or 'image/png'. "
+        "Default None omits it."),
+    ] = None,
+    data: Annotated[
+        str | None,
+        Field(description="Payload to wrap (action=build), decoded via "
+        "`input_format`. Default None."),
+    ] = None,
+    base64: Annotated[
+        bool,
+        Field(description="For build: true base64-encodes the payload (adds "
+        "';base64'), false percent-encodes it. Default true."),
+    ] = True,
+    uri: Annotated[
+        str | None,
+        Field(description="The 'data:...' URI to parse (action=parse). Default "
+        "None."),
+    ] = None,
+    input_format: Annotated[
+        Literal["text", "hex", "base64"],
+        Field(description="How build `data` is decoded to bytes; default 'text'."),
+    ] = "text",
+    output_format: Annotated[
+        Literal["text", "hex", "base64"],
+        Field(description="How parsed payload is rendered (text=UTF-8 | hex | "
+        "base64); default 'text'."),
+    ] = "text",
 ) -> dict:
     """Build a data: URI from a payload, or parse one into its parts (RFC 2397).
 
@@ -1204,6 +1415,8 @@ def data_uri(
     payload, else it is percent-encoded. action=parse (needs `uri`): returns
     `media_type` (defaulting to text/plain when absent), the `;k=v` `parameters`,
     `is_base64`, and the decoded `data` rendered via `output_format`.
+    Example: data_uri("build", media_type="text/plain", data="hi") -> uri
+    "data:text/plain;base64,aGk="
     """
     if action == "build":
         if data is None:
@@ -1276,14 +1489,44 @@ def _fill_byte(fill: str) -> bytes:
 
 
 def bytes_edit(
-    action: Literal["pad", "trim", "slice", "concat", "size", "prefix"],
-    data: str,
-    length: int | None = None,
-    start: int | None = None,
-    end: int | None = None,
-    parts: list[str] | None = None,
-    side: Literal["left", "right"] = "left",
-    fill: str = "00",
+    action: Annotated[
+        Literal["pad", "trim", "slice", "concat", "size", "prefix"],
+        Field(description="Edit to apply: pad (widen to `length`), trim (strip "
+        "`fill`), slice (`start`:`end`), concat (append `parts`), size (report "
+        "byte length), prefix (add/strip 0x)."),
+    ],
+    data: Annotated[
+        str,
+        Field(description="Input byte-buffer as hex, a leading 0x is optional."),
+    ],
+    length: Annotated[
+        int | None,
+        Field(description="Target byte width for action=pad. Default None."),
+    ] = None,
+    start: Annotated[
+        int | None,
+        Field(description="Slice start index (Python indexing, negatives allowed); "
+        "default None means 0."),
+    ] = None,
+    end: Annotated[
+        int | None,
+        Field(description="Slice end index (Python indexing, negatives allowed); "
+        "default None means end of buffer."),
+    ] = None,
+    parts: Annotated[
+        list[str] | None,
+        Field(description="Hex buffers to append for action=concat. Default None."),
+    ] = None,
+    side: Annotated[
+        Literal["left", "right"],
+        Field(description="Which side acts: pad prepend/append, trim leading/"
+        "trailing, prefix add/strip 0x. Default 'left'."),
+    ] = "left",
+    fill: Annotated[
+        str,
+        Field(description="The pad/trim byte as one hex byte (0x optional); "
+        "default '00'."),
+    ] = "00",
 ) -> dict:
     """Edit a hex byte-buffer: pad/trim to width, slice, concat, size, or 0x-prefix.
 
@@ -1299,6 +1542,8 @@ def bytes_edit(
 
     Returns {action, result, size}: `result` is the 0x-prefixed hex buffer (bare
     hex when prefix-stripping), `size` its byte length.
+    Example: a 20-byte address -> 32-byte log topic:
+    bytes_edit("pad", "0x1234", length=4, side="left") -> result "0x00001234"
     """
     raw = _hex_to_bytes(data)
 
@@ -1341,15 +1586,24 @@ def bytes_edit(
 # input was already in the requested form — handy for "is this string canonical?"
 # checks before hashing/comparing identifiers.
 def unicode_normalize(
-    text: str,
-    form: Literal["NFC", "NFD", "NFKC", "NFKD"] = "NFC",
+    text: Annotated[
+        str,
+        Field(description="Text to normalize."),
+    ],
+    form: Annotated[
+        Literal["NFC", "NFD", "NFKC", "NFKD"],
+        Field(description="Normalization form: NFC/NFD canonical compose/decompose; "
+        "NFKC/NFKD also fold compatibility variants (ligatures, full-width, "
+        "circled digits). Default 'NFC'."),
+    ] = "NFC",
 ) -> dict:
     """Normalize text to a Unicode normalization form (NFC/NFD/NFKC/NFKD).
 
     NFC/NFD are canonical compose/decompose; NFKC/NFKD also fold compatibility
     characters (ligatures, full-width, circled digits) to their plain forms.
     `changed` is true when `result` differs from the input — i.e. the text was
-    not already in `form`.
+    not already in `form`. Returns {form, result, changed}.
+    Example: unicode_normalize("ﬁ", "NFKC") -> result "fi" (ﬁ ligature, ① -> 1)
     """
     if form not in ("NFC", "NFD", "NFKC", "NFKD"):
         raise ValueError(f"unknown form {form!r}; expected NFC|NFD|NFKC|NFKD")
@@ -1366,10 +1620,24 @@ def unicode_normalize(
 # rather than raising, flagged via `output_format`. `errors` (strict|replace|
 # ignore|backslashreplace|…) governs both legs; strict is the safe default.
 def charset_transcode(
-    text: str,
-    from_charset: str,
-    to_charset: str,
-    errors: str = "strict",
+    text: Annotated[
+        str,
+        Field(description="Text to reinterpret across encodings."),
+    ],
+    from_charset: Annotated[
+        str,
+        Field(description="Encoding to encode `text` under to recover its raw "
+        "bytes, e.g. cp1252, latin-1, utf-8."),
+    ],
+    to_charset: Annotated[
+        str,
+        Field(description="Encoding to decode those bytes under, e.g. utf-8."),
+    ],
+    errors: Annotated[
+        str,
+        Field(description="Codec error handler applied to both legs: strict|"
+        "replace|ignore|backslashreplace|…. Default 'strict'."),
+    ] = "strict",
 ) -> dict:
     """Convert text between character encodings (e.g. latin-1/cp1252 <-> utf-8).
 
@@ -1377,6 +1645,8 @@ def charset_transcode(
     then decoded under `to_charset`. If the bytes aren't valid `to_charset` text
     they're returned as bare hex with `output_format='hex'` (otherwise 'text').
     `errors` selects the codec error handler (strict|replace|ignore|…).
+    Returns {from_charset, to_charset, result, output_format}.
+    Example: charset_transcode("cafÃ©", "cp1252", "utf-8") -> result "café"
     """
     for name in (from_charset, to_charset):
         try:
@@ -1480,19 +1750,28 @@ _ESCAPERS = {
 
 
 def string_escape(
-    text: str,
-    style: Literal[
-        "json",
-        "js",
-        "python",
-        "c",
-        "shell",
-        "html",
-        "xml",
-        "backslash",
-        "unicode_escape",
-        "quoted_printable",
-        "mime_word",
+    text: Annotated[
+        str,
+        Field(description="Text to escape."),
+    ],
+    style: Annotated[
+        Literal[
+            "json",
+            "js",
+            "python",
+            "c",
+            "shell",
+            "html",
+            "xml",
+            "backslash",
+            "unicode_escape",
+            "quoted_printable",
+            "mime_word",
+        ],
+        Field(description="Escaping convention: json|js|python|c|backslash "
+        "(backslash escapes), html|xml (entities), unicode_escape, "
+        "quoted_printable, mime_word (=?UTF-8?B?...?=), or shell (paste-safe "
+        "single-quoted token)."),
     ],
 ) -> dict:
     """Escape text for a source-code or markup context (JSON/JS/C/shell/HTML/...).
@@ -1500,7 +1779,9 @@ def string_escape(
     `style` picks the convention: json|js|python|c|backslash (backslash escapes),
     html|xml (entities), unicode_escape (\\uXXXX/\\xNN), quoted_printable, or
     mime_word (=?UTF-8?B?...?=). shell yields a paste-safe single-quoted token.
-    For URL %-escaping use encode(scheme='url') instead. Inverse: string_unescape.
+    For URL %-escaping use encode(scheme='url') instead. An unknown `style` raises
+    ValueError. Returns {style, result}. Inverse: string_unescape.
+    Example: string_escape('a"b', "json") -> result 'a\\"b'
     """
     escaper = _ESCAPERS.get(style)
     if escaper is None:
@@ -1649,26 +1930,36 @@ _UNESCAPERS = {
 
 
 def string_unescape(
-    text: str,
-    style: Literal[
-        "json",
-        "js",
-        "python",
-        "c",
-        "shell",
-        "html",
-        "xml",
-        "backslash",
-        "unicode_escape",
-        "quoted_printable",
-        "mime_word",
+    text: Annotated[
+        str,
+        Field(description="Escaped text to decode back to its original form."),
+    ],
+    style: Annotated[
+        Literal[
+            "json",
+            "js",
+            "python",
+            "c",
+            "shell",
+            "html",
+            "xml",
+            "backslash",
+            "unicode_escape",
+            "quoted_printable",
+            "mime_word",
+        ],
+        Field(description="Escaping convention `text` is in (inverse of "
+        "string_escape): json|js|python|c|backslash, html|xml, unicode_escape, "
+        "quoted_printable, mime_word, or shell."),
     ],
 ) -> dict:
     """Reverse a source-code or markup escaping back to the original text.
 
     Style-for-style inverse of string_escape (json|js|python|c|backslash escape
     sequences, html|xml entities, unicode_escape, quoted_printable, mime_word,
-    and shell). Malformed escape sequences raise ValueError.
+    and shell). Malformed escape sequences (and an unknown `style`) raise
+    ValueError. Returns {style, result}.
+    Example: string_unescape('a\\nb', "json") -> result "a<newline>b"
     """
     unescaper = _UNESCAPERS.get(style)
     if unescaper is None:
@@ -1703,7 +1994,12 @@ def _codepoint_name(ch: str) -> str:
     return _CN_LABELS.get(cat, f"<unnamed {cat}>")
 
 
-def codepoints(text: str) -> dict:
+def codepoints(
+    text: Annotated[
+        str,
+        Field(description="Text to break into its constituent Unicode scalars."),
+    ],
+) -> dict:
     """Break text into its code points with names and UTF-8/16/32 byte views.
 
     Returns one entry per Unicode scalar (astral characters stay whole): the
@@ -1711,6 +2007,7 @@ def codepoints(text: str) -> dict:
     placeholder for unnamed control/format/private-use scalars), and big-endian
     `utf8`/`utf16`/`utf32` byte views as hex. `count` is the code-point length,
     which differs from len() only for surrogate-pair-bearing input.
+    Example: codepoints("é") -> count 1, char "é" at codepoint "U+00E9"
     """
     chars = [
         {
@@ -1749,13 +2046,37 @@ def _eff_wordlist() -> tuple[str, ...]:
 
 
 def random(
-    kind: Literal["bytes", "hex", "urlsafe", "token", "passphrase"] = "urlsafe",
-    length: int | None = None,
-    nbytes: int = 32,
-    words: int = 6,
-    separator: str = "-",
-    wordlist: list[str] | None = None,
-    output_format: Literal["hex", "base64"] = "hex",
+    kind: Annotated[
+        Literal["bytes", "hex", "urlsafe", "token", "passphrase"],
+        Field(description="Output shape: bytes|hex|urlsafe draw `nbytes` random "
+        "bytes; token is `length` alphanumeric chars; passphrase joins `words` "
+        "diceware words. Default 'urlsafe'."),
+    ] = "urlsafe",
+    length: Annotated[
+        int | None,
+        Field(description="Character count for kind=token; default None means 32."),
+    ] = None,
+    nbytes: Annotated[
+        int,
+        Field(description="Byte count for kind=bytes/hex/urlsafe; default 32."),
+    ] = 32,
+    words: Annotated[
+        int,
+        Field(description="Word count for kind=passphrase; default 6."),
+    ] = 6,
+    separator: Annotated[
+        str,
+        Field(description="Joiner between passphrase words; default '-'."),
+    ] = "-",
+    wordlist: Annotated[
+        list[str] | None,
+        Field(description="Custom passphrase word list; default None uses the "
+        "bundled EFF large diceware list (7776 words)."),
+    ] = None,
+    output_format: Annotated[
+        Literal["hex", "base64"],
+        Field(description="Rendering for kind=bytes (hex/base64); default 'hex'."),
+    ] = "hex",
 ) -> dict:
     """Generate cryptographically secure random bytes, a token, or a passphrase.
 
@@ -1767,6 +2088,7 @@ def random(
     joins `words` (default 6) words with `separator` (default '-'), drawn from
     `wordlist` or the bundled EFF large diceware list. Returns {kind, value,
     entropy_bits}; the value is the only secret and is never logged elsewhere.
+    Example: random("hex", nbytes=4) -> value "6a08ed95" (8 hex chars, 32 bits)
     """
     if kind in ("bytes", "hex", "urlsafe"):
         if nbytes <= 0:

@@ -28,7 +28,15 @@ from mcp.server.fastmcp import FastMCP
 from mcp_bytesmith import __version__, core, eth, serialize
 
 # TODO 4.1 — the singleton app. Every tool registers here.
-mcp = FastMCP("mcp-bytesmith")
+mcp = FastMCP(
+    "mcp-bytesmith",
+    instructions=(
+        "Pure-Python, offline toolbox for byte/string encoding & decoding, hashing "
+        "& HMAC, number/time conversion, Ethereum/EVM primitives, and schemaless "
+        "structured serialization (CBOR/MessagePack/bencode/protobuf). No network "
+        "calls; every tool is deterministic and local."
+    ),
+)
 
 # Always-on stdlib tools (gate: stdlib) — registered unconditionally.
 core.register(mcp)
@@ -52,7 +60,14 @@ if serialize.available():
 
 @mcp.tool()
 def info() -> dict:
-    """Report mcp-bytesmith availability, version, and enabled toolsets."""
+    """Discovery / health-check entrypoint: report availability and enabled toolsets.
+
+    Returns six keys: `status` ("available"), `name`, `version` (package version),
+    `python` (runtime version), `mcp_sdk` (MCP SDK version, or "unknown"), and
+    `toolsets` (sorted list of live optional toolsets).
+    Example: {"status":"available","name":"mcp-bytesmith","version":"0.1.0",
+    "python":"3.12.3","mcp_sdk":"1.2.0","toolsets":["ethereum","serialize"]}
+    """
     try:  # CR.7 — metadata may be absent (uninstalled SDK); never crash info()
         mcp_sdk = version("mcp")
     except PackageNotFoundError:
