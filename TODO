@@ -338,6 +338,15 @@ Checkbox legend:  [ ] not started   [~] in progress   [x] done
                ret: {format, encoded} | {format, decoded, root?}
                note: RLP & ABI keep their own ethereum codecs (11.5-11.6) — the
                      shipped flagship pair; varint folds into num_convert (18.4.1)
+               status: four-format core shipped (cbor/msgpack/bencode/protobuf);
+                       asn1 + ssz deferred. Tick 11.9 when all six land.
+        [x] 11.9.1.  cbor      encode + decode  (§1.17.1; cbor2)
+        [x] 11.9.2.  msgpack   encode + decode  (§1.17.3; msgpack)
+        [x] 11.9.3.  bencode   encode + decode  (§1.17.4; pure-python)
+        [x] 11.9.4.  protobuf  decode only      (§1.17.6; pure-python raw wire)
+        [ ] 11.9.5.  asn1      DER/BER          (§1.17.5; +crypto asn1crypto)
+        [ ] 11.9.6.  ssz       encode + decode  (§1.17.2; +ethereum,
+                     options.schema, returns merkle root)
 
 
 [ ] 12.  TEXT & UNICODE  —  text-level transforms, escaping & inspection

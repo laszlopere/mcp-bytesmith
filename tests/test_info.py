@@ -50,8 +50,12 @@ def test_info_python_and_mcp_sdk_present():
 
 def test_info_toolsets_is_list():
     # §7.2.5 — toolsets is a list reporting live optional extras (plan §2.0.7).
-    from mcp_bytesmith import eth
+    from mcp_bytesmith import eth, serialize
 
+    expected = sorted(
+        (["ethereum"] if eth.available() else [])
+        + (["serialize"] if serialize.available() else [])
+    )
     payload = info()
     assert isinstance(payload["toolsets"], list)
-    assert payload["toolsets"] == (["ethereum"] if eth.available() else [])
+    assert payload["toolsets"] == expected

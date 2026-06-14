@@ -25,7 +25,7 @@ from importlib.metadata import PackageNotFoundError, version
 
 from mcp.server.fastmcp import FastMCP
 
-from mcp_bytesmith import __version__, core, eth
+from mcp_bytesmith import __version__, core, eth, serialize
 
 # TODO 4.1 — the singleton app. Every tool registers here.
 mcp = FastMCP("mcp-bytesmith")
@@ -41,6 +41,10 @@ _TOOLSETS: list[str] = []
 if eth.available():
     eth.register(mcp)
     _TOOLSETS.append("ethereum")
+
+if serialize.available():
+    serialize.register(mcp)
+    _TOOLSETS.append("serialize")
 # -------------------------------------------------------------------------------
 
 # Tools register below.

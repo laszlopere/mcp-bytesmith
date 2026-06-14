@@ -53,8 +53,12 @@ def test_invoke_through_app_matches_payload():
     # §7.3.3 — invoke through the MCP layer; payload matches §7.2.
     from importlib.metadata import version
 
-    from mcp_bytesmith import eth
+    from mcp_bytesmith import eth, serialize
 
+    expected = sorted(
+        (["ethereum"] if eth.available() else [])
+        + (["serialize"] if serialize.available() else [])
+    )
     payload = _call_info_via_app()
     assert payload["status"] == "available"
     assert payload["name"] == "mcp-bytesmith"
@@ -62,7 +66,7 @@ def test_invoke_through_app_matches_payload():
     assert payload["python"]
     assert payload["mcp_sdk"]
     # toolsets reflects which optional extras are live (plan §2.0.7).
-    assert payload["toolsets"] == (["ethereum"] if eth.available() else [])
+    assert payload["toolsets"] == expected
 
 
 def test_info_survives_missing_sdk_metadata(monkeypatch):
