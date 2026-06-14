@@ -96,7 +96,29 @@ def test_event_topic0_is_full_32_bytes():
     assert len(out["topic0"]) == 66  # 0x + 64 hex chars
 
 
+def test_selector_byte_alias_normalizes_to_bytes1():
+    # Solidity's `byte` alias canonicalizes to `bytes1`.
+    assert eth_selector("foo(byte x)")["signature"] == "foo(bytes1)"
+
+
+def test_selector_tuple_array_suffix():
+    # An array suffix on a tuple parameter is preserved after canonicalization.
+    out = eth_selector("foo((uint256,address)[2] x)")
+    assert out["signature"] == "foo((uint256,address)[2])"
+
+
 # --- error paths ---------------------------------------------------------------
+def test_empty_parameter_raises():
+    # A trailing comma yields an empty parameter, which is rejected.
+    with pytest.raises(ValueError):
+        eth_selector("foo(uint256,)")
+
+
+def test_unknown_kind_raises():
+    with pytest.raises(ValueError):
+        eth_selector("foo()", "modifier")
+
+
 def test_no_parameter_list_raises():
     with pytest.raises(ValueError):
         eth_selector("transfer")

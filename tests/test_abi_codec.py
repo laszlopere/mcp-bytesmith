@@ -213,7 +213,89 @@ def test_types_and_values_accept_json_strings():
     assert out["encoded"] == "0x" + W[:-1] + "1"
 
 
+# --- static fixed-arrays / static tuples (head-region sizing) ------------------
+def test_decode_fixed_array_of_static():
+    # uint256[2] is static and inline; decode returns decimal strings.
+    data = "0x" + "00" * 31 + "01" + "00" * 31 + "02"
+    assert _dec(["uint256[2]"], data) == [["1", "2"]]
+
+
+def test_roundtrip_static_tuple_with_fixed_array():
+    # A static tuple containing a fixed array exercises _abi_static_size's
+    # array and tuple branches when sizing the head region.
+    types = ["(uint256[2],bool)", "uint256"]
+    values = [[[1, 2], True], 9]
+    assert _dec(types, _enc(types, values)) == [[["1", "2"], True], "9"]
+
+
+def test_decode_bytes4_left_aligned():
+    assert _dec(["bytes4"], "0xdeadbeef" + "00" * 28) == ["0xdeadbeef"]
+
+
+# --- more packed scalars -------------------------------------------------------
+def test_packed_bool():
+    assert _enc(["bool"], [True], mode="packed") == "0x01"
+    assert _enc(["bool"], [False], mode="packed") == "0x00"
+
+
+def test_packed_bytesN_right_padded():
+    # bytesN packs to exactly N bytes (right-padded if short).
+    assert _enc(["bytes4"], ["0xdeadbeef"], mode="packed") == "0xdeadbeef"
+    assert _enc(["bytes4"], ["0xdead"], mode="packed") == "0xdead0000"
+
+
+def test_packed_signed_int_twos_complement():
+    # int16(-1) packs to its 2-byte two's-complement form.
+    assert _enc(["int16"], [-1], mode="packed") == "0xffff"
+
+
 # --- error paths ---------------------------------------------------------------
+def test_encode_bytesN_too_long_raises():
+    with pytest.raises(ValueError):
+        abi_codec("encode", ["bytes4"], values=["0xdeadbeef00"])
+
+
+def test_encode_unsupported_scalar_type_raises():
+    with pytest.raises(ValueError):
+        abi_codec("encode", ["foo"], values=[1])
+
+
+def test_encode_fixed_array_wrong_length_raises():
+    with pytest.raises(ValueError):
+        abi_codec("encode", ["uint256[2]"], values=[[1, 2, 3]])
+
+
+def test_encode_tuple_arity_mismatch_raises():
+    with pytest.raises(ValueError):
+        abi_codec("encode", ["(uint256,bool)"], values=[[1]])
+
+
+def test_packed_bytesN_too_long_raises():
+    with pytest.raises(ValueError):
+        abi_codec("encode", ["bytes4"], values=["0xdeadbeef00"], mode="packed")
+
+
+def test_packed_unsupported_scalar_type_raises():
+    with pytest.raises(ValueError):
+        abi_codec("encode", ["foo"], values=[1], mode="packed")
+
+
+def test_packed_fixed_array_wrong_length_raises():
+    with pytest.raises(ValueError):
+        abi_codec("encode", ["uint8[2]"], values=[[1, 2, 3]], mode="packed")
+
+
+def test_decode_unsupported_scalar_type_raises():
+    with pytest.raises(ValueError):
+        abi_codec("decode", ["foo"], data="0x" + W)
+
+
+def test_types_not_a_list_raises():
+    # A JSON string that parses to a non-list `types` is rejected.
+    with pytest.raises(ValueError):
+        abi_codec("encode", json.dumps("uint256"), values=[1])
+
+
 def test_packed_decode_rejected():
     with pytest.raises(ValueError):
         abi_codec("decode", ["uint256"], data="0x" + W, mode="packed")

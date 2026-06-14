@@ -21,12 +21,20 @@ is the Mail/Person example published in the EIP-712 specification itself."""
 
 import asyncio
 import json
+import sys
 
 import pytest
 
 pytest.importorskip("Crypto", reason="ethereum extra (pycryptodome) not installed")
 
-from mcp_bytesmith.eth import eth_hash  # noqa: E402
+import mcp_bytesmith.eth as eth_mod  # noqa: E402
+from mcp_bytesmith.eth import (  # noqa: E402
+    _eip712_encode_value,
+    _from_bytes,
+    _keccak256,
+    available,
+    eth_hash,
+)
 from mcp_bytesmith.server import mcp  # noqa: E402
 
 # --- keccak-256 ----------------------------------------------------------------
@@ -144,6 +152,56 @@ def test_bad_hex_input_raises():
 def test_unknown_input_format_raises():
     with pytest.raises(ValueError):
         eth_hash("keccak256", "hello", "rot13")
+
+
+# --- EIP-712 per-member value encoding (_eip712_encode_value) ------------------
+# Exercising the value-type branches directly with exact 32-byte vectors.
+def test_eip712_encode_value_bool():
+    assert _eip712_encode_value("bool", True, {}) == (1).to_bytes(32, "big")
+    assert _eip712_encode_value("bool", False, {}) == (0).to_bytes(32, "big")
+
+
+def test_eip712_encode_value_bytes_is_keccak_of_payload():
+    # dynamic `bytes` member hashes to keccak256 of the raw bytes.
+    assert _eip712_encode_value("bytes", "0xdeadbeef", {}) == _keccak256(
+        bytes.fromhex("deadbeef")
+    )
+
+
+def test_eip712_encode_value_bytesN_is_left_aligned():
+    assert (
+        _eip712_encode_value("bytes4", "0xdeadbeef", {})
+        == bytes.fromhex("deadbeef") + b"\x00" * 28
+    )
+
+
+def test_eip712_encode_value_array_is_keccak_of_concatenation():
+    # arrays encode to keccak256 of the concatenated element words.
+    got = _eip712_encode_value("uint256[]", [1, 2], {})
+    expect = _keccak256((1).to_bytes(32, "big") + (2).to_bytes(32, "big"))
+    assert got == expect
+
+
+def test_eip712_encode_value_unsupported_type_raises():
+    with pytest.raises(ValueError):
+        _eip712_encode_value("fixed128x18", 1, {})
+
+
+# --- output codec / availability -----------------------------------------------
+def test_from_bytes_unknown_output_format_raises():
+    with pytest.raises(ValueError):
+        _from_bytes(b"\x00", "octal")
+
+
+def test_available_true_when_keccak_importable():
+    assert available() is True
+
+
+def test_available_false_when_crypto_missing(monkeypatch):
+    # The import is guarded so the package loads without the `ethereum` extra;
+    # simulate the missing dependency by breaking the keccak import.
+    monkeypatch.setitem(sys.modules, "Crypto.Hash", None)
+    assert eth_mod.available() is False
 
 
 # --- app registration / schema -------------------------------------------------

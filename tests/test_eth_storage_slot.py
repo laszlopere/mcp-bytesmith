@@ -106,6 +106,30 @@ def test_array_alias_matches_dynamic_array():
     assert a == b
 
 
+# --- other key types -----------------------------------------------------------
+def test_mapping_bytes_key_is_unpadded():
+    # `bytes` keys (like `string`) are used raw / unpadded.
+    out = eth_storage_slot(
+        {"kind": "mapping", "slot": 1, "key_type": "bytes"}, key="0xdeadbeef"
+    )
+    assert out["slot_hex"] == _ref(bytes.fromhex("deadbeef") + (1).to_bytes(32, "big"))
+
+
+def test_mapping_bool_key_is_padded():
+    out = eth_storage_slot(
+        {"kind": "mapping", "slot": 1, "key_type": "bool"}, key=True
+    )
+    assert out["slot_hex"] == _ref((1).to_bytes(32, "big") + (1).to_bytes(32, "big"))
+
+
+def test_mapping_bytes32_key_is_left_aligned():
+    key = "0x" + "ab" * 32
+    out = eth_storage_slot(
+        {"kind": "mapping", "slot": 1, "key_type": "bytes32"}, key=key
+    )
+    assert out["slot_hex"] == _ref(bytes.fromhex("ab" * 32) + (1).to_bytes(32, "big"))
+
+
 # --- error paths ---------------------------------------------------------------
 def test_missing_kind_or_slot_raises():
     with pytest.raises(ValueError):

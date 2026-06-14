@@ -34,7 +34,14 @@ import pytest
 
 pytest.importorskip("Crypto", reason="ethereum extra (pycryptodome) not installed")
 
-from mcp_bytesmith.eth import eth_tx_codec  # noqa: E402
+from mcp_bytesmith.eth import (  # noqa: E402
+    _SECP_G,
+    _SECP_N,
+    _SECP_P,
+    _ec_add,
+    _ecrecover,
+    eth_tx_codec,
+)
 from mcp_bytesmith.server import mcp  # noqa: E402
 
 # --- canonical EIP-155 legacy vector (Ethereum yellow paper / EIP-155) ---------
@@ -283,7 +290,101 @@ def test_zero_signature_has_no_sender():
     )
 
 
+# --- access list in tuple ([address, [keys]]) form -----------------------------
+def test_access_list_tuple_form():
+    # The access list may be given as [[address, [storageKey,...]], ...] tuples
+    # rather than {"address":..,"storageKeys":..} dicts.
+    fields = {
+        "type": 1,
+        "chainId": 1,
+        "nonce": 0,
+        "gasPrice": 1,
+        "gasLimit": 21000,
+        "to": "0x" + "22" * 20,
+        "value": 0,
+        "data": "0x",
+        "accessList": [["0x" + "11" * 20, ["0x" + "00" * 31 + "01"]]],
+        "yParity": 0,
+        "r": "0x" + "aa" * 32,
+        "s": "0x" + "bb" * 32,
+    }
+    raw = eth_tx_codec("encode", fields=fields)["raw"]
+    al = eth_tx_codec("decode", data=raw)["fields"]["accessList"]
+    assert al[0]["address"].lower() == "0x" + "11" * 20
+    assert al[0]["storageKeys"] == ["0x" + "00" * 31 + "01"]
+
+
+# --- legacy tx with a non-standard / unsigned v (not 27/28, not EIP-155) -------
+def test_legacy_unsigned_v_has_no_chain_id_or_sender():
+    fields = {
+        "type": 0,
+        "nonce": 0,
+        "gasPrice": 1,
+        "gasLimit": 21000,
+        "to": "0x" + "00" * 20,
+        "value": 0,
+        "data": "0x",
+        "v": 0,  # neither EIP-155 (>=35) nor pre-EIP-155 (27/28)
+        "r": "0x" + "11" * 32,
+        "s": "0x" + "22" * 32,
+    }
+    raw = eth_tx_codec("encode", fields=fields)["raw"]
+    out = eth_tx_codec("decode", data=raw)
+    assert out["from"] is None
+    assert "chainId" not in out["fields"]
+
+
+# --- secp256k1 point arithmetic (used by from-recovery) ------------------------
+def test_ec_add_identity_element():
+    # The point at infinity (None) is the additive identity.
+    assert _ec_add(_SECP_G, None) == _SECP_G
+    assert _ec_add(None, _SECP_G) == _SECP_G
+
+
+def test_ec_add_point_plus_negation_is_infinity():
+    gx, gy = _SECP_G
+    assert _ec_add(_SECP_G, (gx, _SECP_P - gy)) is None
+
+
+def test_ec_add_doubling_matches_known_2g():
+    # Well-known secp256k1 2*G x-coordinate.
+    two_g = _ec_add(_SECP_G, _SECP_G)
+    assert (
+        two_g[0]
+        == 0xC6047F9441ED7D6D3045406E95C07CD85C778E4B8CEF3CA7ABAC09B95C709EE5
+    )
+
+
+# --- ecrecover argument validation ---------------------------------------------
+def test_ecrecover_rejects_r_out_of_range():
+    with pytest.raises(ValueError):
+        _ecrecover(1, 0, 1, 0)
+    with pytest.raises(ValueError):
+        _ecrecover(1, _SECP_N, 1, 0)
+
+
+def test_ecrecover_rejects_s_out_of_range():
+    with pytest.raises(ValueError):
+        _ecrecover(1, 1, 0, 0)
+
+
+def test_ecrecover_rejects_bad_recovery_id():
+    with pytest.raises(ValueError):
+        _ecrecover(1, 1, 1, 4)
+
+
+def test_ecrecover_rejects_x_out_of_field_range():
+    # rec_id>=2 adds N to r; with r close to N this overflows the field prime.
+    with pytest.raises(ValueError):
+        _ecrecover(1, _SECP_N - 1, 1, 2)
+
+
 # --- error paths ---------------------------------------------------------------
+def test_encode_unsupported_tx_type_raises():
+    with pytest.raises(ValueError):
+        eth_tx_codec("encode", fields={"type": 5, "nonce": 0})
+
+
 def test_decode_empty_raises():
     with pytest.raises(ValueError):
         eth_tx_codec("decode", data="0x")

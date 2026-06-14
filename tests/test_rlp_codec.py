@@ -166,6 +166,25 @@ def test_decode_empty_input_raises():
         rlp_codec("decode", "0x")
 
 
+def test_decode_list_longer_than_input_raises():
+    # 0xc1 declares a 1-byte list payload, but no payload byte follows.
+    with pytest.raises(ValueError):
+        rlp_codec("decode", "0xc1")
+
+
+def test_decode_list_payload_overrun_raises():
+    # 0xc2 declares a 2-byte list payload, but the inner 0x83-string spans 4
+    # bytes — the item overruns the list's declared length.
+    with pytest.raises(ValueError):
+        rlp_codec("decode", "0xc283616263")
+
+
+def test_encode_unsupported_leaf_type_raises():
+    # A float is neither a hex string, an int, nor a list.
+    with pytest.raises(ValueError):
+        rlp_codec("encode", 1.5)
+
+
 def test_decode_non_string_raises():
     with pytest.raises(ValueError):
         rlp_codec("decode", [1, 2, 3])
