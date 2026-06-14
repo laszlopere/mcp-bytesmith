@@ -19,6 +19,10 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
+        with:
+          # Distinct cache per matrix Python so the two jobs don't race on one
+          # cache key ("Unable to reserve cache … another job may be creating").
+          cache-suffix: ${{ matrix.python-version }}
 
       - name: Install the project
         # Let uv manage a project venv; installing into the runner's system
