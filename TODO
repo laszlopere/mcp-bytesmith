@@ -321,6 +321,23 @@ Checkbox legend:  [ ] not started   [~] in progress   [x] done
                        | slice (start/end) | concat (parts:[...])
                        | size | prefix (add|strip via side)
                ret: {action, result, size}
+    [ ] 11.9.  serialize_codec(format req, action req, data req,
+               options opt)                              -> §1.17.1-6
+               desc: Encode / decode schemaless structured data across the
+                     RLP-family binary serializers — ONE multiplexed codec,
+                     dispatched by `format` (cf. encode/decode's scheme dispatch).
+               gate: serialize (cbor2/msgpack)   per-format extras:
+                     asn1 -> +crypto (asn1crypto); ssz -> +ethereum   [MAYBE]
+               merges: cbor + msgpack + bencode + asn1 + protobuf + ssz codecs
+                       (§1.17.1-6); avoids 6 near-identical encode/decode tools
+               format: cbor | msgpack | bencode | asn1 | protobuf | ssz
+               action: encode | decode
+                       (protobuf is decode-only — no field names w/o a .proto
+                        schema; ssz needs options.schema + returns a merkle root)
+               options: {schema?}   (per-format; ssz/protobuf typing)
+               ret: {format, encoded} | {format, decoded, root?}
+               note: RLP & ABI keep their own ethereum codecs (11.5-11.6) — the
+                     shipped flagship pair; varint folds into num_convert (18.4.1)
 
 
 [ ] 12.  TEXT & UNICODE  —  text-level transforms, escaping & inspection
@@ -516,6 +533,11 @@ Checkbox legend:  [ ] not started   [~] in progress   [x] done
                gate: stdlib   (arbitrary-precision int; no eth dep)
                from_base/to_base: hex | dec | bin | oct
                ret: {value, from_base, to_base, result}
+        [ ] 18.4.1. + varint family: add as a from_base/to_base value with a
+                    `scheme` opt (leb128 | protobuf | vlq | compactsize) —
+                    int <-> variable-length bytes, rendered hex.   -> §1.17.7
+                    gate: stdlib (hand-rolled)  [MAYBE — keeps varint out of
+                    its own tool; it's an integer encoding, num_convert's job]
     [x] 18.5.  byte_order(data req, from_order req, to_order req,
                width opt, input_format opt=hex, output_format opt=hex)
                desc: Convert a value between host and network byte order

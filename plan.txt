@@ -138,6 +138,24 @@ LEGEND
     1.16. Ethereum/EVM reference data (offline lookup tables)
         1.16.1. chain registry: chainId <-> name <-> native    [BUILD] rel=med
                 currency <-> explorer (bundled static table)
+    1.17. General-purpose structured serialization (schemaless binary;
+          the RLP family — self-describing, length-prefixed, nestable)
+          (1.17.1-6 ship as ONE multiplexed serialize_codec(format,...) tool,
+           mirroring encode/decode's scheme dispatch; RLP/ABI keep their own
+           ethereum codecs. 1.17.7 varint folds into num_convert, not a tool.)
+        1.17.1. CBOR encode / decode (RFC 8949; COSE/WebAuthn/   [MAYBE] rel=low
+                Solidity-metadata; the standardized RLP peer)
+        1.17.2. SSZ encode / decode (Simple Serialize; ETH       [MAYBE] rel=low
+                consensus/beacon layer — RLP's PoS counterpart)
+        1.17.3. MessagePack encode / decode (JSON-mappable)      [MAYBE] rel=low
+        1.17.4. Bencode encode / decode (BitTorrent; tiny,       [MAYBE] rel=low
+                RLP-simple: ints/strings/lists/dicts)
+        1.17.5. ASN.1 DER/BER encode / decode (TLV; X.509/TLS/   [MAYBE] rel=low
+                PKCS backbone — ties into 1.10 cert tooling)
+        1.17.6. Protobuf wire-format raw decode (schemaless,     [MAYBE] rel=low
+                field-number + wire-type; like protoc --decode_raw)
+        1.17.7. varint primitives (LEB128 / protobuf / VLQ /     [MAYBE] rel=low
+                Bitcoin CompactSize) -> num_convert scheme (1.4.15)
 
     ------------------------------------------------------------------------
     LIBRARIES (Python) — ~60% is stdlib (zero deps); rest is ~8 packages.
