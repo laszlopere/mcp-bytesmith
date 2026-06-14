@@ -176,6 +176,194 @@ def test_encode_stringified_structure_is_parsed():
     assert _enc("cbor", "plain") != _enc("cbor", '{"a": 1}')  # bare string stays a string
 
 
+# --- available() guard ---------------------------------------------------------
+def test_available_true_when_deps_present():
+    from mcp_bytesmith.serialize import available
+
+    assert available() is True
+
+
+def test_available_false_when_dep_missing(monkeypatch):
+    # Force the cbor2/msgpack imports to fail so available() takes its except path.
+    import builtins
+
+    from mcp_bytesmith import serialize as serialize_mod
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name in ("cbor2", "msgpack"):
+            raise ImportError(name)
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    assert serialize_mod.available() is False
+
+
+# --- cbor / msgpack extra reference vectors ------------------------------------
+def test_cbor_more_known_vectors():
+    # RFC 8949 appendix A: -1 -> 0x20, "" -> 0x60, [1,2,3] -> 0x83010203,
+    # {"a":1} -> 0xa1616101, false/true/null -> f4/f5/f6.
+    assert _enc("cbor", -1) == "20"
+    assert _enc("cbor", "") == "60"
+    assert _enc("cbor", [1, 2, 3]) == "83010203"
+    assert _enc("cbor", {"a": 1}) == "a1616101"
+    assert _enc("cbor", False) == "f4"
+    assert _enc("cbor", True) == "f5"
+    assert _enc("cbor", None) == "f6"
+
+
+def test_msgpack_more_known_vectors():
+    # MessagePack spec: -1 -> 0xff (negative fixint), "" -> 0xa0 (fixstr len 0),
+    # [1,2,3] -> 0x93010203, {"a":1} -> 0x81a16101, false/true/nil -> c2/c3/c0.
+    assert _enc("msgpack", -1) == "ff"
+    assert _enc("msgpack", "") == "a0"
+    assert _enc("msgpack", [1, 2, 3]) == "93010203"
+    assert _enc("msgpack", {"a": 1}) == "81a16101"
+    assert _enc("msgpack", False) == "c2"
+    assert _enc("msgpack", True) == "c3"
+    assert _enc("msgpack", None) == "c0"
+
+
+# --- bencode encode-side type handling -----------------------------------------
+def test_bencode_encode_bytes_value():
+    # Raw bytes encode as <len>:<bytes> just like strings (0xff 0xfe -> 2:..).
+    assert _enc("bencode", b"\xff\xfe") == b"2:\xff\xfe".hex()
+
+
+def test_bencode_encode_negative_and_zero_int():
+    assert _enc("bencode", 0) == b"i0e".hex()
+    assert _enc("bencode", -7) == b"i-7e".hex()
+
+
+def test_bencode_encode_non_string_dict_key_rejected():
+    with pytest.raises(ValueError, match="dict keys must be strings"):
+        serialize_codec("bencode", "encode", {1: "a"})
+
+
+def test_bencode_encode_unsupported_type_rejected():
+    with pytest.raises(ValueError, match="cannot encode value of type float"):
+        serialize_codec("bencode", "encode", 1.5)
+
+
+# --- bencode decode-side error paths -------------------------------------------
+def _bdec_hex(text_bytes):
+    return serialize_codec("bencode", "decode", text_bytes.hex())["decoded"]
+
+
+def test_bencode_decode_empty_truncated():
+    with pytest.raises(ValueError, match="truncated"):
+        serialize_codec("bencode", "decode", "")
+
+
+def test_bencode_decode_integer_missing_terminator():
+    with pytest.raises(ValueError, match="missing its 'e' terminator"):
+        _bdec_hex(b"i42")
+
+
+@pytest.mark.parametrize("token", [b"ie", b"i-e", b"i03e", b"i-0e"])
+def test_bencode_decode_malformed_integer(token):
+    with pytest.raises(ValueError, match="malformed bencode integer"):
+        _bdec_hex(token)
+
+
+def test_bencode_decode_list_missing_terminator():
+    with pytest.raises(ValueError, match="list is missing its 'e' terminator"):
+        _bdec_hex(b"l")
+
+
+def test_bencode_decode_dict_non_string_key():
+    # d i1e 1:a e — an integer key is not a byte-string.
+    with pytest.raises(ValueError, match="dict keys must be byte-strings"):
+        _bdec_hex(b"di1e1:ae")
+
+
+def test_bencode_decode_dict_missing_terminator():
+    with pytest.raises(ValueError, match="dict is missing its 'e' terminator"):
+        _bdec_hex(b"d")
+
+
+def test_bencode_decode_string_missing_colon():
+    with pytest.raises(ValueError, match="missing its ':' separator"):
+        _bdec_hex(b"4")
+
+
+def test_bencode_decode_string_longer_than_input():
+    with pytest.raises(ValueError, match="string longer than input"):
+        _bdec_hex(b"5:ab")
+
+
+def test_bencode_decode_unexpected_marker():
+    with pytest.raises(ValueError, match="unexpected bencode marker"):
+        _bdec_hex(b"x")
+
+
+def test_bencode_decode_trailing_bytes():
+    with pytest.raises(ValueError, match="trailing bytes after the top-level"):
+        _bdec_hex(b"i1ei2e")
+
+
+# --- protobuf decode-side error paths and wire types ---------------------------
+def test_protobuf_varint_exceeds_64_bits():
+    # field 1 varint, then ten continuation bytes -> shift overflows 64 bits.
+    with pytest.raises(ValueError, match="exceeds 64 bits"):
+        serialize_codec("protobuf", "decode", "08" + "ff" * 10)
+
+
+def test_protobuf_field_number_zero_invalid():
+    with pytest.raises(ValueError, match="field number 0 is invalid"):
+        serialize_codec("protobuf", "decode", "00")
+
+
+def test_protobuf_i64_field():
+    # field 1, wire 1 (i64): tag 0x09 + 8 bytes -> rendered as 0x-prefixed hex.
+    assert _dec("protobuf", "090011223344556677") == [
+        {"field": 1, "wire_type": "i64", "value": "0x0011223344556677"}
+    ]
+
+
+def test_protobuf_i64_truncated():
+    with pytest.raises(ValueError, match="i64 field truncated"):
+        serialize_codec("protobuf", "decode", "0900")
+
+
+def test_protobuf_i32_field():
+    # field 1, wire 5 (i32): tag 0x0d + 4 bytes.
+    assert _dec("protobuf", "0d11223344") == [
+        {"field": 1, "wire_type": "i32", "value": "0x11223344"}
+    ]
+
+
+def test_protobuf_i32_truncated():
+    with pytest.raises(ValueError, match="i32 field truncated"):
+        serialize_codec("protobuf", "decode", "0d11")
+
+
+def test_protobuf_length_delimited_truncated():
+    # field 2, wire 2, declared length 5 but only 1 byte follows.
+    with pytest.raises(ValueError, match="length-delimited field truncated"):
+        serialize_codec("protobuf", "decode", "0a05ab")
+
+
+def test_protobuf_chunk_non_utf8_falls_back_to_hex():
+    # field 2, wire 2, content 0xff 0xff: not a sub-message, not UTF-8 -> hex.
+    assert _dec("protobuf", "1202ffff") == [
+        {"field": 2, "wire_type": "bytes", "value": {"hex": "0xffff"}}
+    ]
+
+
+def test_protobuf_group_wire_type_unsupported():
+    # field 1, wire 3 (start-group): tag 0x0b -> rejected.
+    with pytest.raises(ValueError, match="unsupported protobuf wire type"):
+        serialize_codec("protobuf", "decode", "0b")
+
+
+# --- decode unknown format -----------------------------------------------------
+def test_decode_unknown_format_raises():
+    with pytest.raises(ValueError, match="unknown format"):
+        serialize_codec("yaml", "decode", "00")
+
+
 # --- app registration ----------------------------------------------------------
 def test_registered_and_callable_through_app():
     names = {t.name for t in asyncio.run(mcp.list_tools())}
