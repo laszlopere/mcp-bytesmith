@@ -1,5 +1,12 @@
 # mcp-bytesmith
 
+[![CI](https://github.com/laszlopere/mcp-bytesmith/actions/workflows/ci.yml/badge.svg)](https://github.com/laszlopere/mcp-bytesmith/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/mcp-bytesmith.svg)](https://pypi.org/project/mcp-bytesmith/)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
+[![License: GPLv3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
+[![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-db61a2.svg)](https://github.com/sponsors/laszlopere)
+[![mcp-bytesmith MCP server](https://glama.ai/mcp/servers/laszlopere/mcp-bytesmith/badges/score.svg)](https://glama.ai/mcp/servers/laszlopere/mcp-bytesmith)
+
 A pure-Python [Model Context Protocol](https://modelcontextprotocol.io) server,
 built on the official MCP SDK (FastMCP), exposing a toolbox of byte-wrangling
 utilities — encoding, hashing, number crunching, and Ethereum primitives — all
