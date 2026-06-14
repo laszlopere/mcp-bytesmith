@@ -516,6 +516,18 @@ Checkbox legend:  [ ] not started   [~] in progress   [x] done
                gate: stdlib   (arbitrary-precision int; no eth dep)
                from_base/to_base: hex | dec | bin | oct
                ret: {value, from_base, to_base, result}
+    [x] 18.5.  byte_order(data req, from_order req, to_order req,
+               width opt, input_format opt=hex, output_format opt=hex)
+               desc: Convert a value between host and network byte order
+                     (htons/htonl/ntohs/ntohl) — i.e. swap endianness between
+                     little/big, with network == big-endian.
+               gate: stdlib   (pure byte reversal; no deps)
+               from_order/to_order: host | little | big | network
+                     (network is an alias for big; host resolves to the
+                      running platform's sys.byteorder)
+               width: optional fixed field size (e.g. 2/4/8) — left-pads/groups
+                      the bytes before swapping; defaults to the data length
+               ret: {result, from_order, to_order, width, output_format}
 
 
 [ ] 19.  VALIDATE  —  checksum / check-digit verification

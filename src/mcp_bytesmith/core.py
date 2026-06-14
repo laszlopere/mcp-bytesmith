@@ -35,6 +35,7 @@ import quopri
 import secrets
 import shlex
 import string
+import sys
 import unicodedata
 import zlib
 from email.header import decode_header, make_header
@@ -130,6 +131,89 @@ def num_convert(
         "from_base": from_base,
         "to_base": to_base,
         "result": result,
+    }
+
+
+# --- byte_order (§2.9.5 / TODO 18.5 — host<->network endianness) ---------------
+# The htons/htonl/ntohs/ntohl family generalized to arbitrary widths: swap a
+# value's byte order between little- and big-endian (network == big). With no
+# `width` the whole buffer is one field reversed end-to-end; with `width` the
+# buffer is a sequence of fixed-size fields — a short value is left zero-padded up
+# to `width` first, a longer one is split into `width`-byte groups each swapped
+# independently (array semantics, like htonl over a uint32[]). `host` resolves to
+# the running platform's sys.byteorder, so on a little-endian box host->network
+# reproduces the C macros. A no-op swap (from==to) still applies the width
+# normalization, so `result` is always width-aligned.
+ByteOrder = Literal["host", "little", "big", "network"]
+
+
+def _resolve_byte_order(order: str) -> str:
+    """Map an order name to 'little'/'big' (network->big, host->sys.byteorder)."""
+    if order == "network":
+        return "big"
+    if order == "host":
+        return sys.byteorder
+    if order in ("little", "big"):
+        return order
+    raise ValueError(f"unknown byte order {order!r}; expected host|little|big|network")
+
+
+def byte_order(
+    data: str,
+    from_order: ByteOrder,
+    to_order: ByteOrder,
+    width: int | None = None,
+    input_format: Literal["text", "hex", "base64"] = "hex",
+    output_format: Literal["hex", "base64"] = "hex",
+) -> dict:
+    """Convert a value between host and network byte order (htons/htonl/ntohs/ntohl).
+
+    `data` is decoded via `input_format` (hex default). `from_order`/`to_order`
+    are little|big|network|host: network is big-endian, host resolves to the
+    platform's sys.byteorder — so on a little-endian box from_order=host
+    to_order=network is htonl/htons. `width` (bytes) sets a fixed field size: a
+    shorter buffer is left zero-padded up to `width`, a longer one is split into
+    `width`-byte groups each swapped independently (array semantics); omit it to
+    swap the whole buffer as one field. Differing orders reverse each field; equal
+    orders only apply the width normalization. Returns {result, from_order,
+    to_order, width, output_format}; `result` is rendered via `output_format`.
+    """
+    raw = _to_bytes(data, input_format)
+    src = _resolve_byte_order(from_order)
+    dst = _resolve_byte_order(to_order)
+
+    if width is None:
+        w = len(raw)
+        padded = raw
+    else:
+        if width <= 0:
+            raise ValueError(f"width must be positive, got {width}")
+        if width > _MAX_ALLOC:
+            raise ValueError(f"width must be <= {_MAX_ALLOC}, got {width}")
+        w = width
+        if len(raw) <= width:
+            padded = raw.rjust(width, b"\x00")  # left zero-pad a short value
+        elif len(raw) % width == 0:
+            padded = raw  # an array of width-byte fields
+        else:
+            raise ValueError(
+                f"data length {len(raw)} is not a multiple of width {width}"
+            )
+
+    if w == 0:  # empty buffer with no width: nothing to group or reverse
+        out = padded
+    else:
+        fields = [padded[i : i + w] for i in range(0, len(padded), w)]
+        if src != dst:
+            fields = [field[::-1] for field in fields]
+        out = b"".join(fields)
+
+    return {
+        "result": _render(out, output_format),
+        "from_order": from_order,
+        "to_order": to_order,
+        "width": w,
+        "output_format": output_format,
     }
 
 
@@ -1347,6 +1431,7 @@ def random(
 def register(mcp) -> None:
     """Register the always-on stdlib tools against the FastMCP app."""
     mcp.tool()(num_convert)
+    mcp.tool()(byte_order)
     mcp.tool()(hash)
     mcp.tool()(encode)
     mcp.tool()(decode)
