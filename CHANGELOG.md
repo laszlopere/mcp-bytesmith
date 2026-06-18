@@ -5,6 +5,24 @@ All notable changes to **mcp-bytesmith** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Tolerant handling of LLM-mangled tool-call `arguments`: a `tools/call` whose
+  `arguments` arrive as a JSON *string* (the common double-encoding offender) —
+  including single quotes, trailing commas, or unquoted barewords — is repaired
+  before the SDK's strict validation rejects it (via a stdio read-stream
+  interposer in `jsonfix.py`, backed by `json-repair`). Unparseable arguments
+  get an actionable JSON-RPC `-32700` parse error instead of a bare "Invalid
+  request parameters".
+- Argument-validation failures (missing field, wrong type) are reshaped into a
+  concise, field-naming message that drops pydantic's multi-line preamble and
+  `errors.pydantic.dev` URL, so the model self-corrects in one turn
+  (`errors.py`, wired via a `FastMCP` subclass).
+
+### Changed
+- New runtime dependency: `json-repair>=0.30`.
+
 ## [0.2.0] - 2026-06-14
 
 Feature release: a new **serialize** toolset plus several new Core and Ethereum

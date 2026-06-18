@@ -21,14 +21,45 @@ Transport is stdio (FastMCP default), which is what Claude Code / Desktop launch
 """
 
 import platform
+from collections.abc import Sequence as AbcSequence
 from importlib.metadata import PackageNotFoundError, version
+from typing import Any
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
+from mcp.types import ContentBlock
+from pydantic import ValidationError
 
 from mcp_bytesmith import __version__, core, eth, serialize
+from mcp_bytesmith.errors import format_validation_error
+
+
+class _BytesmithFastMCP(FastMCP):
+    """FastMCP that reshapes argument-validation errors for the model.
+
+    FastMCP wraps a failed pydantic argument validation as a ToolError whose
+    `__cause__` is the ValidationError. We catch that one case and re-raise with
+    a concise, field-naming message (errors.format_validation_error); the SDK
+    still returns it as an `isError` result. Tool-body failures (a tool's own
+    ValueError, etc.) carry a different cause or none, so they fall through
+    unchanged.
+    """
+
+    async def call_tool(
+        self, name: str, arguments: dict[str, Any]
+    ) -> AbcSequence[ContentBlock] | dict[str, Any]:
+        try:
+            return await super().call_tool(name, arguments)
+        except ToolError as exc:
+            if isinstance(exc.__cause__, ValidationError):
+                raise ToolError(
+                    format_validation_error(name, exc.__cause__)
+                ) from exc.__cause__
+            raise
+
 
 # TODO 4.1 — the singleton app. Every tool registers here.
-mcp = FastMCP(
+mcp = _BytesmithFastMCP(
     "mcp-bytesmith",
     instructions=(
         "Pure-Python, offline toolbox for byte/string encoding & decoding, hashing "
