@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-19
+
+Robustness release: the server now tolerates and clearly diagnoses malformed
+tool calls from LLM clients.
+
 ### Added
 - Tolerant handling of LLM-mangled tool-call `arguments`: a `tools/call` whose
   `arguments` arrive as a JSON *string* (the common double-encoding offender) —
@@ -79,6 +84,7 @@ done locally, with no network calls.
   EIP-191, EIP-712), `abi_codec`, `rlp_codec`, `eth_selector`, `eth_tx_codec`,
   `eth_storage_slot`, `eth_address_case` (EIP-55).
 
+[0.3.0]: https://github.com/laszlopere/mcp-bytesmith/releases/tag/v0.3.0
 [0.2.0]: https://github.com/laszlopere/mcp-bytesmith/releases/tag/v0.2.0
 [0.1.0]: https://github.com/laszlopere/mcp-bytesmith/releases/tag/v0.1.0
 [0.0.1]: https://github.com/laszlopere/mcp-bytesmith/releases/tag/v0.0.1
