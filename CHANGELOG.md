@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `eth_contract_address` — compute a contract's `create` or `create2` deployment
+  address. `create` hashes `rlp([deployer, nonce])`, so the address depends on
+  how many times the deployer has deployed; `create2` (EIP-1014) hashes
+  `0xff ++ deployer ++ salt ++ keccak256(init_code)`, which is counterfactual —
+  computable before the contract exists. The `salt` must be exactly 32 bytes and
+  the `nonce` is bounded to EIP-2681's `0..2^64-1`; `init_code` is the creation
+  bytecode (constructor plus its encoded arguments), not the deployed runtime
+  code. Returns the EIP-55 checksummed `address` and deploys nothing. Checked
+  against all seven worked examples in EIP-1014.
+- `eth_eoa_address` — derive an externally-owned account's address and public key
+  from its private key: the public key is the curve point `k*G` serialized
+  uncompressed, and the address is the EIP-55 checksummed keccak-256 tail of its
+  `X || Y` body. The EOA counterpart to `eth_contract_address` — it derives, it
+  does not create an account. Keys outside the secp256k1 range `0 < k < n` are
+  rejected rather than silently reduced. The private key is never echoed back.
 - `derive_key` — derive raw key bytes from a password or secret via `pbkdf2`
   (default), `scrypt`, or `hkdf` (RFC 5869, hand-rolled on `hmac`), rendered as
   hex or base64. Entirely stdlib, so no extra is needed. Deterministic by

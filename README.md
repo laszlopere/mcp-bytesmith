@@ -43,8 +43,10 @@ primitives you reach for when working on-chain: `eth_hash` for keccak-256,
 EIP-191, and EIP-712 typed-data hashing, `abi_codec` and `rlp_codec` for ABI and
 RLP encode/decode, `eth_selector` for function and event selectors, `eth_tx_codec`
 for transactions, `eth_storage_slot` for storage layout, `eth_address_case`
-for EIP-55 checksums, `ens_namehash` for EIP-137 ENS namehash/labelhash, and
-`bip32_derive` for BIP-32/44 HD key and address derivation from a seed. An
+for EIP-55 checksums, `ens_namehash` for EIP-137 ENS namehash/labelhash,
+`bip32_derive` for BIP-32/44 HD key and address derivation from a seed,
+`eth_eoa_address` for the address and public key behind a private key, and
+`eth_contract_address` for CREATE and CREATE2 deployment addresses. An
 always-available `info` tool reports which toolsets are
 active along with version information.
 

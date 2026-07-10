@@ -67,6 +67,22 @@ def _eip55(addr_lower: str) -> str:
     return "0x" + "".join(out)
 
 
+def _address_body(address: str) -> str:
+    """Validate a 20-byte hex address (0x prefix optional) -> its 40 hex chars.
+
+    Casing is preserved, so callers that check an EIP-55 checksum can compare it.
+    """
+    body = address[2:] if address[:2].lower() == "0x" else address
+    if len(body) != 40 or any(ch not in _HEX for ch in body):
+        raise ValueError(f"not a 20-byte hex address (need 40 hex chars): {address!r}")
+    return body
+
+
+def _pubkey_address(pubkey_body: bytes) -> str:
+    """EIP-55 address for a 64-byte uncompressed public key body (X || Y, no 0x04)."""
+    return _eip55(_keccak256(pubkey_body)[-20:].hex())
+
+
 # --- output codec (input side: core._to_bytes, plan §2.0.6) --------------------
 def _from_bytes(raw: bytes, output_format: str) -> str:
     """Render bytes back out per output_format (hex is 0x-prefixed | base64)."""
@@ -929,18 +945,6 @@ def _ecrecover(z: int, r: int, s: int, rec_id: int) -> bytes:
     return _keccak256(pubkey)[-20:]
 
 
-# --- BIP-32 / BIP-44 HD derivation (§1.15.2) -----------------------------------
-# An HD wallet grows a tree of keys from one seed. The master key is
-# HMAC-SHA512("Bitcoin seed", seed): left half = master private key (a secp256k1
-# scalar), right half = master chain code. Each path step i derives a child from
-# HMAC-SHA512(chain_code, data || ser32(i)), where data is 0x00||ser256(k_parent)
-# for a HARDENED step (i >= 2^31) or the 33-byte compressed parent pubkey for a
-# normal one; the child key is (IL + k_parent) mod n and the child chain code is
-# IR. The curve math reuses _ec_mul/_SECP_* above. Ethereum uses coin type 60, so
-# the conventional account-0 path is m/44'/60'/0'/0/0.
-_BIP32_HARDENED = 0x80000000
-
-
 def _secp_pubkey_point(k: int) -> tuple[int, int]:
     """The secp256k1 public point k*G; k is a valid non-zero scalar < n, so never O."""
     point = _ec_mul(k, _SECP_G)
@@ -958,6 +962,140 @@ def _secp_pubkey_uncompressed(k: int) -> bytes:
     """65-byte uncompressed public key (0x04 || X || Y) for private scalar k."""
     x, y = _secp_pubkey_point(k)
     return b"\x04" + x.to_bytes(32, "big") + y.to_bytes(32, "big")
+
+
+def _private_key_scalar(private_key: str) -> int:
+    """Parse a 32-byte hex private key into a valid secp256k1 scalar."""
+    raw = _to_bytes(private_key, "hex")
+    if len(raw) != 32:
+        raise ValueError(f"private key must be 32 bytes, got {len(raw)}")
+    k = int.from_bytes(raw, "big")
+    if not 0 < k < _SECP_N:  # 0 and >= n have no valid public point
+        raise ValueError("private key is out of the secp256k1 range (0 < k < n)")
+    return k
+
+
+# --- address derivation: EOA (§1.14.6) and contract (§1.14.1) ------------------
+# Both addresses are keccak tails, differing only in what gets hashed. An EOA's
+# is the last 20 bytes of keccak256 over the 64-byte public key body (X || Y),
+# i.e. the key determines the address. A contract's is chosen by the DEPLOYER:
+# CREATE hashes rlp([deployer, nonce]) — so it depends on how many times that
+# account has deployed — while CREATE2 (EIP-1014) hashes
+# 0xff || deployer || salt || keccak256(init_code), which is counterfactual: it
+# can be computed before the contract exists. Neither tool deploys anything.
+def eth_eoa_address(
+    private_key: Annotated[
+        str,
+        Field(
+            description="A 32-byte secp256k1 private key as hex (0x prefix optional). "
+            "Never echoed back in the result."
+        ),
+    ],
+) -> dict:
+    """Derive an EOA's Ethereum address and public key from its private key.
+
+    The public key is the curve point k*G, serialized uncompressed (0x04 || X || Y);
+    the address is the last 20 bytes of keccak256(X || Y), EIP-55 checksummed. This
+    is the externally-owned-account counterpart to `eth_contract_address` — it
+    derives, it does not create an account. Returns {address, public_key}; the
+    private key is never echoed back.
+
+    Example: eth_eoa_address(
+    "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80") ->
+    address="0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266".
+    """
+    pubkey = _secp_pubkey_uncompressed(_private_key_scalar(private_key))
+    return {
+        "address": _pubkey_address(pubkey[1:]),
+        "public_key": "0x" + pubkey.hex(),
+    }
+
+
+def eth_contract_address(
+    scheme: Annotated[
+        Literal["create", "create2"],
+        Field(
+            description="'create' derives from the deployer and its `nonce`; "
+            "'create2' (EIP-1014) derives from the deployer, a `salt`, and the "
+            "`init_code`, so the address is known before deployment."
+        ),
+    ],
+    deployer: Annotated[
+        str,
+        Field(
+            description="The deploying account's 20-byte hex address (0x optional, "
+            "any casing) — an EOA for a top-level deploy, or the factory contract."
+        ),
+    ],
+    nonce: Annotated[
+        int | str | None,
+        Field(
+            description="The deployer's transaction nonce for this deploy (required "
+            "for scheme=create; int, decimal string, or 0x-hex). A contract "
+            "deployer's nonce starts at 1, an EOA's at 0."
+        ),
+    ] = None,
+    salt: Annotated[
+        str | None,
+        Field(
+            description="A 32-byte hex salt chosen by the deployer (required for "
+            "scheme=create2)."
+        ),
+    ] = None,
+    init_code: Annotated[
+        str | None,
+        Field(
+            description="The full contract creation bytecode as hex — constructor "
+            "code plus its ABI-encoded arguments, NOT the deployed runtime code "
+            "(required for scheme=create2)."
+        ),
+    ] = None,
+) -> dict:
+    """Compute a contract's CREATE or CREATE2 deployment address.
+
+    scheme=create  -> needs `nonce`;  address = keccak256(rlp([deployer, nonce]))[12:]
+    scheme=create2 -> needs `salt` and `init_code`;
+                      address = keccak256(0xff ++ deployer ++ salt ++
+                                          keccak256(init_code))[12:]
+    Returns {address}, EIP-55 checksummed. Computes only — nothing is deployed.
+
+    Example: eth_contract_address("create",
+    "0x6ac7ea33f8831ea9dcc53393aaa88b25a785dbf0", nonce=0) ->
+    address="0xcd234A471b72ba2F1Ccf0A70FCABA648a5eeCD8d".
+    """
+    deployer_bytes = bytes.fromhex(_address_body(deployer))
+
+    if scheme == "create":
+        if nonce is None:
+            raise ValueError("scheme=create requires `nonce`")
+        nonce_int = _eip712_parse_int(nonce)
+        if not 0 <= nonce_int < 2**64:  # EIP-2681 caps account nonces at 2^64-1
+            raise ValueError(f"nonce out of range (0..2^64-1): {nonce}")
+        digest = _keccak256(_rlp_encode([deployer_bytes.hex(), nonce_int]))
+    elif scheme == "create2":
+        if salt is None or init_code is None:
+            raise ValueError("scheme=create2 requires `salt` and `init_code`")
+        salt_bytes = _to_bytes(salt, "hex")
+        if len(salt_bytes) != 32:
+            raise ValueError(f"salt must be 32 bytes, got {len(salt_bytes)}")
+        code_hash = _keccak256(_to_bytes(init_code, "hex"))
+        digest = _keccak256(b"\xff" + deployer_bytes + salt_bytes + code_hash)
+    else:
+        raise ValueError(f"unknown scheme {scheme!r}; expected 'create' or 'create2'")
+
+    return {"address": _eip55(digest[-20:].hex())}
+
+
+# --- BIP-32 / BIP-44 HD derivation (§1.15.2) -----------------------------------
+# An HD wallet grows a tree of keys from one seed. The master key is
+# HMAC-SHA512("Bitcoin seed", seed): left half = master private key (a secp256k1
+# scalar), right half = master chain code. Each path step i derives a child from
+# HMAC-SHA512(chain_code, data || ser32(i)), where data is 0x00||ser256(k_parent)
+# for a HARDENED step (i >= 2^31) or the 33-byte compressed parent pubkey for a
+# normal one; the child key is (IL + k_parent) mod n and the child chain code is
+# IR. The curve math reuses _ec_mul/_SECP_* above. Ethereum uses coin type 60, so
+# the conventional account-0 path is m/44'/60'/0'/0/0.
+_BIP32_HARDENED = 0x80000000
 
 
 def _bip32_master(seed: bytes) -> tuple[int, bytes]:
@@ -1060,7 +1198,7 @@ def bip32_derive(
     for index in indices:
         k, chain_code = _bip32_ckd_priv(k, chain_code, index)
     pubkey = _secp_pubkey_uncompressed(k)
-    address = _eip55(_keccak256(pubkey[1:])[-20:].hex())
+    address = _pubkey_address(pubkey[1:])
     return {
         "path": _format_bip32_path(indices),
         "depth": len(indices),
@@ -1371,9 +1509,7 @@ def eth_address_case(
     "0x52908400098527886e0f7030069857d2e4169ee7") ->
     address="0x52908400098527886E0F7030069857D2E4169EE7".
     """
-    body = address[2:] if address[:2].lower() == "0x" else address
-    if len(body) != 40 or any(ch not in _HEX for ch in body):
-        raise ValueError(f"not a 20-byte hex address (need 40 hex chars): {address!r}")
+    body = _address_body(address)
     checksummed = _eip55(body.lower())
     if action == "encode":
         return {"action": "encode", "address": checksummed}
@@ -1435,6 +1571,8 @@ def register(mcp) -> None:
     mcp.tool()(rlp_codec)
     mcp.tool()(abi_codec)
     mcp.tool()(eth_storage_slot)
+    mcp.tool()(eth_eoa_address)
+    mcp.tool()(eth_contract_address)
     mcp.tool()(eth_tx_codec)
     mcp.tool()(eth_address_case)
     mcp.tool()(ens_namehash)

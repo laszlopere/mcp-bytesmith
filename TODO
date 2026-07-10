@@ -396,12 +396,12 @@ Checkbox legend:  [ ] not started   [~] in progress   [x] done
                gate: stdlib  (pbkdf2/scrypt stdlib; hkdf hand-rolled on hmac)
                kdf: pbkdf2 scrypt hkdf
                ret: {kdf, key, length, params}
-    [ ] 13.3.  eth_eoa_address(private_key req)                   -> §1.14.6
+    [x] 13.3.  eth_eoa_address(private_key req)                   -> §1.14.6
                desc: Derive an EOA's address (and public key) from its private key
                      — the EOA counterpart to eth_contract_address; creates nothing.
                gate: ethereum   (secp256k1 mult, then keccak)
                ret: {address, public_key}   (key NOT echoed; §2.0.6)
-    [ ] 13.4.  eth_contract_address(scheme req, deployer req, nonce opt,
+    [x] 13.4.  eth_contract_address(scheme req, deployer req, nonce opt,
                salt opt, init_code opt)                      -> §1.14.1
                desc: Compute a contract's CREATE or CREATE2 deployment address.
                gate: ethereum
