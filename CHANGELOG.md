@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `otpauth_uri` — build or parse an `otpauth://` provisioning URI (the Key URI
+  Format that QR-code authenticator apps consume). A structured-URI codec like
+  `data_uri`: it assembles/splits the URI and carries the base32 `secret`
+  through verbatim; it does not compute OTP codes. Enforces the totp/hotp rules
+  (HOTP needs a `counter`; `counter`/`period` must match the type) and fills the
+  RFC defaults (SHA1 / 6 digits / 30 s period) on parse.
+
 ## [0.3.0] - 2026-06-19
 
 Robustness release: the server now tolerates and clearly diagnoses malformed

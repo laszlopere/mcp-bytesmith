@@ -46,7 +46,7 @@ from email.utils import format_datetime, parsedate_to_datetime
 from importlib.resources import files
 from pathlib import Path
 from typing import Annotated, Any, Literal
-from urllib.parse import quote, quote_plus, unquote_to_bytes
+from urllib.parse import parse_qsl, quote, quote_plus, unquote, unquote_to_bytes, urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import Field
@@ -1525,6 +1525,178 @@ def data_uri(
     raise ValueError(f"unknown action {action!r}; expected 'build' or 'parse'")
 
 
+# --- otpauth_uri (§2.2.4, §1.7.3 — Key URI Format) -----------------------------
+# otpauth://TYPE/LABEL?PARAMS, the QR-code provisioning URI Google Authenticator
+# et al. consume. A structured-URI codec like data_uri: build assembles the URI
+# from parts, parse splits one back. It does NOT compute OTP codes (that is the
+# separate `otp` tool, §2.6.4) — the base32 `secret` is carried through verbatim.
+_BASE32_ALPHABET = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZ234567")
+_OTP_ALGORITHMS = ("SHA1", "SHA256", "SHA512")
+
+
+def _normalize_otp_secret(secret: str) -> str:
+    """Uppercase a base32 secret, drop spaces/padding, and validate its alphabet."""
+    body = "".join(secret.split()).upper().rstrip("=")
+    if not body:
+        raise ValueError("`secret` is empty")
+    bad = sorted(set(body) - _BASE32_ALPHABET)
+    if bad:
+        raise ValueError(
+            f"`secret` is not valid base32 (RFC 4648, A-Z2-7): stray {bad!r}"
+        )
+    return body
+
+
+def _normalize_otp_algorithm(algorithm: str) -> str:
+    """Canonicalize the hash algorithm name against the OTP-permitted set."""
+    upper = algorithm.upper()
+    if upper not in _OTP_ALGORITHMS:
+        raise ValueError(
+            f"unknown algorithm {algorithm!r}; expected one of {_OTP_ALGORITHMS}"
+        )
+    return upper
+
+
+def otpauth_uri(
+    action: Annotated[
+        Literal["build", "parse"],
+        Field(
+            description="'build' assembles an otpauth:// URI from parts (needs "
+            "`secret`); 'parse' splits one into its parts (needs `uri`)."
+        ),
+    ],
+    type: Annotated[
+        Literal["totp", "hotp"],
+        Field(
+            description="OTP kind: 'totp' (time-based, RFC 6238) or 'hotp' "
+            "(counter-based, RFC 4226). Default 'totp'."
+        ),
+    ] = "totp",
+    label: Annotated[
+        str | None,
+        Field(
+            description="Account label for build, e.g. 'alice@example.com'. If "
+            "`issuer` is set and the label has no 'issuer:' prefix, one is added. "
+            "Default None."
+        ),
+    ] = None,
+    secret: Annotated[
+        str | None,
+        Field(
+            description="Base32 shared secret (RFC 4648, A-Z2-7) for build; "
+            "spaces and '=' padding are ignored. Default None."
+        ),
+    ] = None,
+    issuer: Annotated[
+        str | None,
+        Field(description="Provider name, e.g. 'Example Inc'. Default None."),
+    ] = None,
+    digits: Annotated[
+        int | None,
+        Field(description="Number of code digits (commonly 6 or 8). Default None."),
+    ] = None,
+    period: Annotated[
+        int | None,
+        Field(description="TOTP time step in seconds (totp only). Default None."),
+    ] = None,
+    counter: Annotated[
+        int | None,
+        Field(
+            description="HOTP counter (required for and valid only with "
+            "type='hotp'). Default None."
+        ),
+    ] = None,
+    algorithm: Annotated[
+        str | None,
+        Field(
+            description="HMAC hash: SHA1 (default when omitted), SHA256, or "
+            "SHA512. Default None."
+        ),
+    ] = None,
+    uri: Annotated[
+        str | None,
+        Field(description="The 'otpauth://...' URI to parse (action=parse). Default None."),
+    ] = None,
+) -> dict:
+    """Build an otpauth:// provisioning URI from parts, or parse one (Key URI Format).
+
+    action=build (needs `secret`): assembles
+    `otpauth://<type>/<label>?secret=...&issuer=...` — `secret` is normalized to
+    canonical base32, `type='hotp'` requires `counter`, and `counter`/`period`
+    must match the `type`. action=parse (needs `uri`): returns `type`, the decoded
+    `label` (plus `issuer`/`account` split on the first ':'), `secret`, and the
+    `algorithm`/`digits`/`period`/`counter` parameters with their RFC defaults.
+    This codec never computes OTP codes; the base32 `secret` is passed through.
+    Example: otpauth_uri("build", label="alice@example.com", secret="JBSWY3DPEHPK3PXP",
+    issuer="Example") -> "otpauth://totp/Example:alice@example.com?secret=...&issuer=Example"
+    """
+    if action == "build":
+        if secret is None:
+            raise ValueError("action=build requires `secret`")
+        if type == "hotp" and counter is None:
+            raise ValueError("type='hotp' requires `counter`")
+        if type == "totp" and counter is not None:
+            raise ValueError("`counter` applies to type='hotp', not 'totp'")
+        if type == "hotp" and period is not None:
+            raise ValueError("`period` applies to type='totp', not 'hotp'")
+
+        path_label = label or ""
+        if issuer and path_label and ":" not in path_label:
+            path_label = f"{issuer}:{path_label}"
+
+        # secret first (canonical), then the recommended/optional params in order.
+        params: list[tuple[str, str]] = [("secret", _normalize_otp_secret(secret))]
+        if issuer is not None:
+            params.append(("issuer", issuer))
+        if algorithm is not None:
+            params.append(("algorithm", _normalize_otp_algorithm(algorithm)))
+        if digits is not None:
+            params.append(("digits", str(digits)))
+        if counter is not None:
+            params.append(("counter", str(counter)))
+        if period is not None:
+            params.append(("period", str(period)))
+
+        query_str = "&".join(f"{k}={quote(v, safe='')}" for k, v in params)
+        path = quote(path_label, safe=":@")
+        return {"action": "build", "uri": f"otpauth://{type}/{path}?{query_str}"}
+
+    if action == "parse":
+        if uri is None:
+            raise ValueError("action=parse requires `uri`")
+        parts = urlsplit(uri)
+        if parts.scheme != "otpauth":
+            raise ValueError("not an otpauth: URI (must start with 'otpauth://')")
+        kind = parts.netloc.lower()
+        if kind not in ("totp", "hotp"):
+            raise ValueError(f"unknown otpauth type {parts.netloc!r}; expected totp/hotp")
+
+        decoded_label = unquote(parts.path.lstrip("/"))
+        query = dict(parse_qsl(parts.query))
+        if "secret" not in query:
+            raise ValueError("otpauth URI is missing the required `secret` parameter")
+
+        # The label may carry an 'issuer:account' prefix; the query issuer wins.
+        label_issuer, sep, account = decoded_label.partition(":")
+        out: dict[str, Any] = {
+            "action": "parse",
+            "type": kind,
+            "label": decoded_label,
+            "account": account if sep else decoded_label,
+            "issuer": query.get("issuer") or (label_issuer if sep else None),
+            "secret": query["secret"],
+            "algorithm": query.get("algorithm", "SHA1").upper(),
+            "digits": int(query["digits"]) if "digits" in query else 6,
+        }
+        if kind == "totp":
+            out["period"] = int(query["period"]) if "period" in query else 30
+        else:
+            out["counter"] = int(query["counter"]) if "counter" in query else None
+        return out
+
+    raise ValueError(f"unknown action {action!r}; expected 'build' or 'parse'")
+
+
 # --- bytes_edit (§2.2.8, merges §1.5.8: pad/trim/slice/concat/size/prefix) -----
 # General byte glue over a hex buffer — no ethereum dep. One `action` selects the
 # edit; the byte view is canonical (input is hex with an optional 0x, output is
@@ -2224,6 +2396,7 @@ def register(mcp) -> None:
     mcp.tool()(encode)
     mcp.tool()(decode)
     mcp.tool()(data_uri)
+    mcp.tool()(otpauth_uri)
     mcp.tool()(bytes_edit)
     mcp.tool()(unicode_normalize)
     mcp.tool()(charset_transcode)

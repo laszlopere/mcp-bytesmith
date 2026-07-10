@@ -28,7 +28,8 @@ more), `hash` computes cryptographic, CRC, and fast non-cryptographic digests,
 digest, `hmac` computes and verifies keyed-hash authentication tags, and
 `num_convert` translates integers between bases. Rounding out the core are
 `bytes_edit` (pad/trim/slice/concat byte glue), `data_uri` (build and parse
-`data:` URIs), `unicode_normalize` and `charset_transcode` for text and
+`data:` URIs), `otpauth_uri` (build and parse `otpauth://` authenticator
+provisioning URIs), `unicode_normalize` and `charset_transcode` for text and
 character-set work, `string_escape`/`string_unescape` for JSON/JS/Python/C
 escaping, `codepoints` for per-scalar Unicode inspection, and `random` for
 CSPRNG-backed bytes, tokens, and passphrases.

@@ -286,7 +286,7 @@ Checkbox legend:  [ ] not started   [~] in progress   [x] done
                action=build (needs data) -> {uri}
                action=parse (needs uri)  -> {media_type, parameters, data,
                                              is_base64}
-    [ ] 11.4.  otpauth_uri(action req, type opt=totp, label opt, secret opt,
+    [x] 11.4.  otpauth_uri(action req, type opt=totp, label opt, secret opt,
                issuer opt, digits opt, period opt, counter opt,
                algorithm opt, uri opt)                       -> §1.7.3
                desc: Build or parse an otpauth:// provisioning URI.
