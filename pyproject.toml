@@ -25,10 +25,11 @@ dev = [
     "idna>=3.0",
     "cbor2>=5.4",
     "msgpack>=1.0",
+    "asn1crypto>=1.5",
 ]
 # Opt-in toolset extras (per plan.txt L.3). Filled as their tools land.
 ethereum = ["pycryptodome>=3.20"]  # keccak-256; + eth-abi/eth-keys/rlp later
-crypto = []    # cryptography, pyjwt[crypto], bcrypt, argon2-cffi, pyotp
+crypto = ["asn1crypto>=1.5"]    # asn1crypto (ASN.1 DER/BER); + cryptography, pyjwt[crypto], bcrypt, argon2-cffi, pyotp later
 ids = []       # uuid-utils, python-ulid
 validate = []  # python-stdnum
 encoding = ["xxhash>=3.0", "base58>=2.1", "base45>=0.4", "idna>=3.0"]  # xxh*/fnv fast hashes + base58/base45/idna codecs
@@ -45,8 +46,8 @@ line-length = 88
 target-version = "py310"
 
 [[tool.mypy.overrides]]
-# base45/msgpack ship no py.typed marker / stubs (base58, idna, xxhash, cbor2 do).
-module = ["base45", "msgpack"]
+# base45/msgpack/asn1crypto ship no py.typed marker / stubs (base58, idna, xxhash, cbor2 do).
+module = ["base45", "msgpack", "asn1crypto.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

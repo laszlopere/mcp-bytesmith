@@ -63,8 +63,8 @@ mcp = _BytesmithFastMCP(
     "mcp-bytesmith",
     instructions=(
         "Pure-Python, offline toolbox for byte/string encoding & decoding, hashing "
-        "& HMAC, number/time conversion, Ethereum/EVM primitives, and schemaless "
-        "structured serialization (CBOR/MessagePack/bencode/protobuf). No network "
+        "& HMAC, number/time conversion, Ethereum/EVM primitives, and structured "
+        "serialization (CBOR/MessagePack/bencode/protobuf/ASN.1/SSZ). No network "
         "calls; every tool is deterministic and local."
     ),
 )

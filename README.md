@@ -44,12 +44,16 @@ always-available `info` tool reports which toolsets are
 active along with version information.
 
 An opt-in **serialization toolset** (enabled via the `serialize` extra) adds
-`serialize_codec`, a single tool that encodes and decodes schemaless structured
-data across CBOR, MessagePack, and bencode, and decodes raw protobuf wire format
+`serialize_codec`, a single tool multiplexed by `format`. It encodes and decodes
+schemaless structured data across CBOR, MessagePack, bencode, and ASN.1 DER/BER
+(a tag-length-value tree; the `crypto` extra's asn1crypto is needed for ASN.1);
+it encodes and decodes SSZ (Simple Serialize) driven by an `options.schema`,
+also returning the `hash_tree_root`; and it decodes raw protobuf wire format
 (protobuf is decode-only — without a `.proto` schema it surfaces field numbers,
 wire types, and values rather than field names).
 
-Further toolsets (crypto, IDs, validation) are on the roadmap — see [`TODO`](./TODO).
+Further toolsets (the rest of crypto, IDs, validation) are on the roadmap — see
+[`TODO`](./TODO).
 
 ## Development
 

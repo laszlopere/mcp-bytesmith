@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `serialize_codec` gains its final two formats, completing the six-format codec:
+  - `asn1` — schemaless ASN.1 DER/BER as a tag-length-value tree (encode +
+    decode). Each node is `{class, tag, [type], constructed}` plus `children`
+    (constructed) or `value`/`value_hex` (primitive); common UNIVERSAL types
+    (INTEGER, OID, BOOLEAN, NULL, the string types) are interpreted, and BER
+    indefinite-length input re-encodes to definite-length DER. Needs the new
+    `crypto` extra (asn1crypto), checked per call.
+  - `ssz` — Simple Serialize (Ethereum consensus layer), schema-driven via
+    `options.schema` (encode + decode). Supports uintN/boolean, vector/list,
+    container, bitvector/bitlist, and bytevector/bytelist, and returns the
+    32-byte `hash_tree_root` for both actions. Pure-Python (SHA-256
+    merkleization is stdlib); roots verified against the `remerkleable`
+    reference implementation.
+- `crypto` extra now installs `asn1crypto` (for the `asn1` serialize format).
 - `otpauth_uri` — build or parse an `otpauth://` provisioning URI (the Key URI
   Format that QR-code authenticator apps consume). A structured-URI codec like
   `data_uri`: it assembles/splits the URI and carries the base32 `secret`
