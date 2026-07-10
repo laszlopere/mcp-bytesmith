@@ -38,7 +38,9 @@ import secrets
 import shlex
 import string
 import sys
+import time
 import unicodedata
+import uuid
 import zlib
 from datetime import datetime, timedelta, timezone
 from email.header import decode_header, make_header
@@ -2955,6 +2957,175 @@ def random(
     )
 
 
+# --- id_generate (§2.5.2 / §1.8.1-3, merges uuid-gen + ulid-gen + nanoid) ------
+# Pure stdlib, so the `ids` extra stays empty: v1/v4/v5 come from `uuid`, while
+# v7 (RFC 9562 §5.7), ULID and nanoid are a handful of `secrets` draws each.
+# v7's timestamp is milliseconds since the Unix epoch; ULID's is the same clock,
+# so both sort lexicographically by creation time. (uuid.uuid7 exists from
+# CPython 3.14; hand-rolled here because the floor is 3.10.)
+_MAX_IDS = 1000  # batch ceiling — a runaway `count` allocates nothing huge
+_MAX_NANOID_SIZE = 1024
+
+# nanoid's default url-safe 64-symbol alphabet (order is irrelevant: every symbol
+# is drawn independently, so only the alphabet's size sets the entropy per char).
+_NANOID_ALPHABET = string.ascii_letters + string.digits + "-_"
+
+_UUID_NAMESPACES = {
+    "dns": uuid.NAMESPACE_DNS,
+    "url": uuid.NAMESPACE_URL,
+    "oid": uuid.NAMESPACE_OID,
+    "x500": uuid.NAMESPACE_X500,
+}
+
+
+def _uuid1() -> uuid.UUID:
+    """UUID v1 with a random node ID, never the host MAC (RFC 9562 §6.10)."""
+    # uuid.uuid1()'s default node is the real hardware address, which would leak
+    # host identity into every ID. RFC 9562 permits a random node instead,
+    # provided the multicast bit (the LSB of the first octet) is set to mark it
+    # as not-a-MAC. clock_seq is likewise randomized per call by uuid.uuid1.
+    return uuid.uuid1(node=secrets.randbits(48) | (1 << 40))
+
+
+def _uuid7() -> uuid.UUID:
+    """UUID v7 (RFC 9562 §5.7): 48-bit ms timestamp, 74 random bits, ver+var."""
+    ts_ms = time.time_ns() // 1_000_000
+    rand_a = secrets.randbits(12)
+    rand_b = secrets.randbits(62)
+    value = (
+        (ts_ms & 0xFFFFFFFFFFFF) << 80  # unix_ts_ms
+        | 0x7 << 76  # ver
+        | rand_a << 64
+        | 0b10 << 62  # var
+        | rand_b
+    )
+    return uuid.UUID(int=value)
+
+
+def _ulid() -> str:
+    """ULID: 48-bit ms timestamp || 80 random bits, as 26 Crockford symbols."""
+    value = ((time.time_ns() // 1_000_000) << 80) | secrets.randbits(80)
+    # 26 symbols hold 130 bits, so the 128-bit value is left-padded with zeros --
+    # the opposite of _base32_crockford_encode, which right-pads a byte string.
+    return "".join(
+        _CROCKFORD_ALPHABET[(value >> (shift * 5)) & 0x1F]
+        for shift in range(25, -1, -1)
+    )
+
+
+def _resolve_namespace(namespace: str) -> uuid.UUID:
+    """Map a well-known namespace name, or a literal UUID string, to a UUID."""
+    known = _UUID_NAMESPACES.get(namespace.lower())
+    if known is not None:
+        return known
+    try:
+        return uuid.UUID(namespace)
+    except ValueError as exc:
+        raise ValueError(
+            f"invalid namespace {namespace!r}; expected dns|url|oid|x500 "
+            "or a UUID string"
+        ) from exc
+
+
+def id_generate(
+    kind: Annotated[
+        Literal["uuid", "ulid", "nanoid"],
+        Field(
+            description="Identifier family: uuid (see `version`), ulid "
+            "(time-sortable, 26 chars), or nanoid (custom `alphabet`/`size`)."
+        ),
+    ],
+    count: Annotated[
+        int,
+        Field(description=f"How many IDs to generate, 1..{_MAX_IDS}; default 1."),
+    ] = 1,
+    version: Annotated[
+        Literal[1, 4, 5, 7] | None,
+        Field(
+            description="UUID version for kind=uuid: 1 (time+random node), 4 "
+            "(random), 5 (SHA-1 of namespace+name), 7 (time-sortable). Default 4."
+        ),
+    ] = None,
+    namespace: Annotated[
+        str | None,
+        Field(
+            description="UUID v5 namespace: dns|url|oid|x500, or a UUID string. "
+            "Required with version=5."
+        ),
+    ] = None,
+    name: Annotated[
+        str | None,
+        Field(
+            description="UUID v5 name hashed within `namespace`, e.g. a hostname. "
+            "Required with version=5."
+        ),
+    ] = None,
+    alphabet: Annotated[
+        str | None,
+        Field(
+            description="Symbol set for kind=nanoid; default None uses the "
+            "standard 64-char url-safe alphabet [A-Za-z0-9_-]."
+        ),
+    ] = None,
+    size: Annotated[
+        int | None,
+        Field(description="Character count for kind=nanoid; default None means 21."),
+    ] = None,
+) -> dict:
+    """Generate one or more identifiers (UUID / ULID / nanoid).
+
+    All randomness is drawn from the OS CSPRNG (`secrets`). `kind` selects the
+    family and which args apply. uuid honours `version` (default 4): v1 is
+    time-based with a *random* node ID rather than the host MAC, v4 is 122 random
+    bits, v5 is the SHA-1 of `name` within `namespace` (dns|url|oid|x500 or a
+    UUID string) and so is deterministic — a `count` above 1 repeats it — and v7
+    is a 48-bit millisecond timestamp plus 74 random bits, which sorts by
+    creation time. ulid is the same clock rendered as 26 Crockford base32
+    characters, also time-sortable. nanoid draws `size` (default 21) symbols from
+    `alphabet` (default 64 url-safe chars). Returns {kind, ids} plus the resolved
+    `version` (uuid) or `size` (nanoid).
+    Example: id_generate("uuid", version=5, namespace="dns", name="example.com")
+    -> ids ["cfbff0d1-9375-5685-968c-48ce8b15ae17"]
+    """
+    if not 1 <= count <= _MAX_IDS:
+        raise ValueError(f"count must be between 1 and {_MAX_IDS}, got {count}")
+
+    if kind == "uuid":
+        ver = 4 if version is None else version
+        if ver == 5:
+            if namespace is None or name is None:
+                raise ValueError("version=5 requires both 'namespace' and 'name'")
+            ns = _resolve_namespace(namespace)
+            ids = [str(uuid.uuid5(ns, name))] * count
+        elif ver == 4:
+            ids = [str(uuid.uuid4()) for _ in range(count)]
+        elif ver == 1:
+            ids = [str(_uuid1()) for _ in range(count)]
+        else:
+            ids = [str(_uuid7()) for _ in range(count)]
+        return {"kind": kind, "version": ver, "ids": ids}
+
+    if kind == "ulid":
+        return {"kind": kind, "ids": [_ulid() for _ in range(count)]}
+
+    if kind == "nanoid":
+        n = 21 if size is None else size
+        if not 1 <= n <= _MAX_NANOID_SIZE:
+            raise ValueError(f"size must be between 1 and {_MAX_NANOID_SIZE}, got {n}")
+        symbols = _NANOID_ALPHABET if alphabet is None else alphabet
+        if len(set(symbols)) < 2:
+            raise ValueError("alphabet must contain at least 2 distinct characters")
+        return {
+            "kind": kind,
+            "size": n,
+            "ids": [
+                "".join(secrets.choice(symbols) for _ in range(n)) for _ in range(count)
+            ],
+        }
+
+    raise ValueError(f"unknown kind {kind!r}; expected uuid|ulid|nanoid")
+
+
 def register(mcp) -> None:
     """Register the always-on stdlib tools against the FastMCP app."""
     mcp.tool()(num_convert)
@@ -2976,3 +3147,4 @@ def register(mcp) -> None:
     mcp.tool()(password_hash)
     mcp.tool()(derive_key)
     mcp.tool()(random)
+    mcp.tool()(id_generate)

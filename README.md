@@ -31,8 +31,9 @@ digest, `hmac` computes and verifies keyed-hash authentication tags, and
 `data:` URIs), `otpauth_uri` (build and parse `otpauth://` authenticator
 provisioning URIs), `unicode_normalize` and `charset_transcode` for text and
 character-set work, `string_escape`/`string_unescape` for JSON/JS/Python/C
-escaping, `codepoints` for per-scalar Unicode inspection, and `random` for
-CSPRNG-backed bytes, tokens, and passphrases. `password_hash` turns a password
+escaping, `codepoints` for per-scalar Unicode inspection, `random` for
+CSPRNG-backed bytes, tokens, and passphrases, and `id_generate` for UUIDs
+(v1/v4/v5/v7), ULIDs, and nanoids. `password_hash` turns a password
 into a verifiable storage string and checks one back — scrypt and PBKDF2 out of
 the box, bcrypt and the argon2 variants with the `crypto` extra — while
 `derive_key` derives raw key bytes from a password or secret via PBKDF2, scrypt,

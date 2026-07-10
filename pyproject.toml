@@ -33,7 +33,7 @@ dev = [
 ethereum = ["pycryptodome>=3.20"]  # keccak-256; + eth-abi/eth-keys/rlp later
 # asn1crypto (ASN.1 DER/BER) + bcrypt/argon2-cffi (password_hash); + cryptography, pyjwt[crypto], pyotp later
 crypto = ["asn1crypto>=1.5", "bcrypt>=4.0", "argon2-cffi>=21.3"]
-ids = []       # uuid-utils, python-ulid
+ids = []       # unused: id_generate's uuid v1/4/5/7 + ulid + nanoid are all stdlib
 validate = []  # python-stdnum
 encoding = ["xxhash>=3.0", "base58>=2.1", "base45>=0.4", "idna>=3.0"]  # xxh*/fnv fast hashes + base58/base45/idna codecs
 serialize = ["cbor2>=5.4", "msgpack>=1.0"]  # cbor + msgpack codecs (bencode/protobuf are pure-python); asn1/ssz later

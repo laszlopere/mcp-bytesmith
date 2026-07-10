@@ -419,7 +419,7 @@ Checkbox legend:  [ ] not started   [~] in progress   [x] done
                gate: ethereum  [MAYBE — defer]
 
 
-[ ] 14.  GENERATE  —  produce new random / unique values
+[x] 14.  GENERATE  —  produce new random / unique values
     [x] 14.1.  random(kind opt=urlsafe, length opt, nbytes opt=32,
                words opt=6, separator opt='-', wordlist opt,
                output_format opt=hex)                       -> §1.11.4
@@ -429,7 +429,7 @@ Checkbox legend:  [ ] not started   [~] in progress   [x] done
                kind: bytes (length) | hex | urlsafe | token
                      | passphrase (words/separator/wordlist)
                ret: {kind, value, entropy_bits?}
-    [ ] 14.2.  id_generate(kind req, count opt=1, version opt, namespace opt,
+    [x] 14.2.  id_generate(kind req, count opt=1, version opt, namespace opt,
                name opt, alphabet opt, size opt)            -> §1.8.1-3
                desc: Generate one or more identifiers (UUID/ULID/nanoid).
                gate: stdlib  (uuid v1/4/5; v7/ulid/nanoid -> +ids extra)
@@ -437,6 +437,15 @@ Checkbox legend:  [ ] not started   [~] in progress   [x] done
                kind: uuid (version 1/4/5/7; namespace+name for v5)
                      | ulid | nanoid (alphabet/size)
                ret: {kind, ids:[...]}
+               status: shipped WITHOUT the `ids` extra — v7 (RFC 9562 §5.7),
+                       ULID and nanoid are a few `secrets` draws each, so the
+                       extra stays empty (cf. ssz under 11.9). v7 and ULID share
+                       a 48-bit ms timestamp and both sort by creation time; v5
+                       is deterministic, so count>1 repeats it. v1 gets a random
+                       node with the multicast bit set (RFC 9562 §6.10), never
+                       the host MAC — uuid.uuid1()'s default would leak it.
+                       count <= 1000; nanoid size <= 1024. ret also carries
+                       `version` (uuid) / `size` (nanoid).
 
 
 [ ] 15.  SIGN / VERIFY & CODES  —  signatures and authentication codes

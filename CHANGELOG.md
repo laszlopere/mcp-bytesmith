@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `id_generate` — generate one or more identifiers: a UUID (`version` 1, 4, 5 or
+  7), a ULID, or a nanoid. Entirely stdlib, so the `ids` extra stays empty —
+  `uuid` supplies v1/v4/v5, while v7 (RFC 9562 §5.7), ULID and nanoid are a few
+  CSPRNG draws each. v7 and ULID share a 48-bit millisecond timestamp, so both
+  sort lexicographically by creation time; v5 hashes a `name` within a
+  `namespace` (`dns`/`url`/`oid`/`x500` or a literal UUID) and is therefore
+  deterministic, which makes a `count` above 1 repeat the same ID. v1 is given a
+  random node ID with the multicast bit set (RFC 9562 §6.10) rather than the
+  host's MAC address, so generating one never leaks host identity. nanoid draws
+  `size` (default 21) symbols from `alphabet` (default the 64 url-safe chars).
+  Batches are bounded to 1000 IDs and a nanoid to 1024 characters.
 - `bip39` — generate, validate, or convert a BIP-39 mnemonic to a seed
   (`action=generate|validate|to_seed`). `generate` builds a mnemonic from supplied
   `entropy` (deterministic) or from fresh CSPRNG entropy of `strength` bits
