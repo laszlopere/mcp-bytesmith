@@ -28,6 +28,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   through verbatim; it does not compute OTP codes. Enforces the totp/hotp rules
   (HOTP needs a `counter`; `counter`/`period` must match the type) and fills the
   RFC defaults (SHA1 / 6 digits / 30 s period) on parse.
+- `bip32_derive` — derive an HD child key and its Ethereum address from a seed
+  along a BIP-32/44 path (e.g. `m/44'/60'/0'/0/0`). Pure-Python secp256k1
+  (reuses the existing curve math) with HMAC-SHA512 CKDpriv; supports hardened
+  (`'`/`h`) and normal steps. Returns `{path, depth, private_key, public_key,
+  chain_code, address}` — the derived child key is returned, but the input seed
+  is never echoed (§2.0.6). Key material verified against BIP-32 Test Vector 1
+  and the standard Hardhat/Anvil dev accounts.
 
 ## [0.3.0] - 2026-06-19
 

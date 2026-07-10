@@ -414,7 +414,7 @@ Checkbox legend:  [ ] not started   [~] in progress   [x] done
                desc: Generate, validate, or convert a BIP-39 mnemonic to a seed.
                gate: ethereum  [MAYBE — defer]
                action: generate | to_seed | validate            -> §1.15.1
-    [ ] 13.7.  bip32_derive(seed req, path req)                   -> §1.15.2
+    [x] 13.7.  bip32_derive(seed req, path req)                   -> §1.15.2
                desc: Derive an HD child key/address from a seed along a BIP-32/44 path.
                gate: ethereum  [MAYBE — defer]
 

@@ -27,6 +27,8 @@ Toolset module contract (the pattern every gated toolset follows):
 """
 
 import base64
+import hashlib
+import hmac
 import json
 from typing import Annotated, Any, Literal
 
@@ -927,6 +929,148 @@ def _ecrecover(z: int, r: int, s: int, rec_id: int) -> bytes:
     return _keccak256(pubkey)[-20:]
 
 
+# --- BIP-32 / BIP-44 HD derivation (§1.15.2) -----------------------------------
+# An HD wallet grows a tree of keys from one seed. The master key is
+# HMAC-SHA512("Bitcoin seed", seed): left half = master private key (a secp256k1
+# scalar), right half = master chain code. Each path step i derives a child from
+# HMAC-SHA512(chain_code, data || ser32(i)), where data is 0x00||ser256(k_parent)
+# for a HARDENED step (i >= 2^31) or the 33-byte compressed parent pubkey for a
+# normal one; the child key is (IL + k_parent) mod n and the child chain code is
+# IR. The curve math reuses _ec_mul/_SECP_* above. Ethereum uses coin type 60, so
+# the conventional account-0 path is m/44'/60'/0'/0/0.
+_BIP32_HARDENED = 0x80000000
+
+
+def _secp_pubkey_point(k: int) -> tuple[int, int]:
+    """The secp256k1 public point k*G; k is a valid non-zero scalar < n, so never O."""
+    point = _ec_mul(k, _SECP_G)
+    assert point is not None  # 0 < k < n by construction (checked by callers)
+    return point
+
+
+def _secp_pubkey_compressed(k: int) -> bytes:
+    """33-byte compressed public key (0x02/0x03 || X) for private scalar k."""
+    x, y = _secp_pubkey_point(k)
+    return (b"\x03" if y & 1 else b"\x02") + x.to_bytes(32, "big")
+
+
+def _secp_pubkey_uncompressed(k: int) -> bytes:
+    """65-byte uncompressed public key (0x04 || X || Y) for private scalar k."""
+    x, y = _secp_pubkey_point(k)
+    return b"\x04" + x.to_bytes(32, "big") + y.to_bytes(32, "big")
+
+
+def _bip32_master(seed: bytes) -> tuple[int, bytes]:
+    """Master (private-key scalar, chain code) from a seed per BIP-32."""
+    i = hmac.new(b"Bitcoin seed", seed, hashlib.sha512).digest()
+    k = int.from_bytes(i[:32], "big")
+    if k == 0 or k >= _SECP_N:  # astronomically unlikely; BIP-32 mandates the check
+        raise ValueError("seed produced an invalid master key (try another seed)")
+    return k, i[32:]
+
+
+def _bip32_ckd_priv(k_par: int, c_par: bytes, index: int) -> tuple[int, bytes]:
+    """Derive child (private-key scalar, chain code) at `index` from a parent."""
+    if index & _BIP32_HARDENED:
+        data = b"\x00" + k_par.to_bytes(32, "big") + index.to_bytes(4, "big")
+    else:
+        data = _secp_pubkey_compressed(k_par) + index.to_bytes(4, "big")
+    i = hmac.new(c_par, data, hashlib.sha512).digest()
+    il = int.from_bytes(i[:32], "big")
+    k_child = (il + k_par) % _SECP_N
+    if il >= _SECP_N or k_child == 0:  # BIP-32: skip to the next index in practice
+        raise ValueError(f"derived key at index {index} is invalid; try another path")
+    return k_child, i[32:]
+
+
+def _parse_bip32_path(path: str) -> list[int]:
+    """Parse an "m/44'/60'/0'/0/0"-style path into a list of 32-bit child indices."""
+    text = path.strip()
+    if text in ("", "m", "M"):
+        return []
+    parts = text.split("/")
+    if parts[0] in ("m", "M"):
+        parts = parts[1:]
+    indices: list[int] = []
+    for part in parts:
+        hardened = part[-1:] in ("'", "h", "H")
+        num_str = part[:-1] if hardened else part
+        if not num_str.isdigit():  # rejects '', signs, whitespace, non-decimal
+            raise ValueError(f"invalid path segment {part!r} in {path!r}")
+        num = int(num_str)
+        if num >= _BIP32_HARDENED:
+            raise ValueError(f"path index {num} out of range (0..2^31-1) in {path!r}")
+        indices.append(num + _BIP32_HARDENED if hardened else num)
+    return indices
+
+
+def _format_bip32_path(indices: list[int]) -> str:
+    """Render a list of child indices back to canonical "m/44'/…" form."""
+    out = ["m"]
+    for idx in indices:
+        if idx & _BIP32_HARDENED:
+            out.append(f"{idx - _BIP32_HARDENED}'")
+        else:
+            out.append(str(idx))
+    return "/".join(out)
+
+
+def bip32_derive(
+    seed: Annotated[
+        str,
+        Field(
+            description="BIP-32 seed bytes (typically the 64-byte BIP-39 "
+            "mnemonic-to-seed output), as hex or base64 per `input_format`. This is a "
+            "SEED, not a mnemonic — derive the seed from words first. Never echoed back."
+        ),
+    ],
+    path: Annotated[
+        str,
+        Field(
+            description="BIP-32/44 derivation path, e.g. \"m/44'/60'/0'/0/0\" (the "
+            "conventional Ethereum account-0 key). Use ' or h to mark a hardened step; "
+            '"m" (or empty) yields the master key itself.'
+        ),
+    ],
+    input_format: Annotated[
+        Literal["hex", "base64"],
+        Field(
+            description="How to decode `seed` to bytes: 'hex' (0x optional) or 'base64'."
+        ),
+    ] = "hex",
+) -> dict:
+    """Derive an HD child key and its Ethereum address from a seed along a BIP-32/44 path.
+
+    The master key comes from HMAC-SHA512("Bitcoin seed", seed); each path step
+    derives a child via BIP-32 CKDpriv (hardened steps use the parent private key,
+    normal steps its compressed public key). The Ethereum address is the last 20
+    bytes of keccak256(uncompressed pubkey), EIP-55 checksummed. Returns {path,
+    depth, private_key, public_key, chain_code, address}; the derived child
+    private_key IS returned (it is new output, not the seed), but the input seed is
+    never echoed.
+
+    Example: bip32_derive(<64-byte seed hex>, "m/44'/60'/0'/0/0") ->
+    {"address": "0x...", "private_key": "0x...", ...}.
+    """
+    seed_bytes = _to_bytes(seed, input_format)
+    if len(seed_bytes) < 16:  # BIP-32 mandates 128..512 bits of seed entropy
+        raise ValueError("seed must be at least 16 bytes")
+    indices = _parse_bip32_path(path)
+    k, chain_code = _bip32_master(seed_bytes)
+    for index in indices:
+        k, chain_code = _bip32_ckd_priv(k, chain_code, index)
+    pubkey = _secp_pubkey_uncompressed(k)
+    address = _eip55(_keccak256(pubkey[1:])[-20:].hex())
+    return {
+        "path": _format_bip32_path(indices),
+        "depth": len(indices),
+        "private_key": "0x" + k.to_bytes(32, "big").hex(),
+        "public_key": "0x" + pubkey.hex(),
+        "chain_code": "0x" + chain_code.hex(),
+        "address": address,
+    }
+
+
 # --- transaction encode / decode (§1.14.7) -------------------------------------
 # A signed Ethereum tx is RLP. Legacy is a bare 9-item list [nonce, gasPrice,
 # gasLimit, to, value, data, v, r, s]; the typed envelopes (EIP-2930/1559/4844)
@@ -1294,3 +1438,4 @@ def register(mcp) -> None:
     mcp.tool()(eth_tx_codec)
     mcp.tool()(eth_address_case)
     mcp.tool()(ens_namehash)
+    mcp.tool()(bip32_derive)
