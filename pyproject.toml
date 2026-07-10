@@ -26,10 +26,13 @@ dev = [
     "cbor2>=5.4",
     "msgpack>=1.0",
     "asn1crypto>=1.5",
+    "bcrypt>=4.0",
+    "argon2-cffi>=21.3",
 ]
 # Opt-in toolset extras (per plan.txt L.3). Filled as their tools land.
 ethereum = ["pycryptodome>=3.20"]  # keccak-256; + eth-abi/eth-keys/rlp later
-crypto = ["asn1crypto>=1.5"]    # asn1crypto (ASN.1 DER/BER); + cryptography, pyjwt[crypto], bcrypt, argon2-cffi, pyotp later
+# asn1crypto (ASN.1 DER/BER) + bcrypt/argon2-cffi (password_hash); + cryptography, pyjwt[crypto], pyotp later
+crypto = ["asn1crypto>=1.5", "bcrypt>=4.0", "argon2-cffi>=21.3"]
 ids = []       # uuid-utils, python-ulid
 validate = []  # python-stdnum
 encoding = ["xxhash>=3.0", "base58>=2.1", "base45>=0.4", "idna>=3.0"]  # xxh*/fnv fast hashes + base58/base45/idna codecs

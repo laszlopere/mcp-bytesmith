@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `password_hash` — hash a password into a verifiable storage string, or verify
+  one against it (`action=hash|verify`). Six schemes: `bcrypt` and `argon2i` /
+  `argon2d` / `argon2id` (from the `crypto` extra, which now also installs
+  `bcrypt` and `argon2-cffi`), plus stdlib `scrypt` and `pbkdf2`, which work
+  with no extra installed. Emits bcrypt's `$2b$…` and argon2's PHC string
+  verbatim; scrypt and PBKDF2 get PHC-shaped strings of their own
+  (`$scrypt$ln=14,r=8,p=1$<salt>$<hash>`, `$pbkdf2-sha256$i=600000$…`), which
+  `verify` parses back — so the scheme and its cost parameters need not be
+  passed again. A wrong password returns `{"valid": false}` rather than raising;
+  only a malformed hash string raises. Cost parameters are bounded (argon2 to
+  1 GiB, PBKDF2 to 10M iterations, bcrypt to cost 16) so a runaway parameter is
+  rejected instead of hanging the server, and the password is never echoed back.
 - `serialize_codec` gains its final two formats, completing the six-format codec:
   - `asn1` — schemaless ASN.1 DER/BER as a tag-length-value tree (encode +
     decode). Each node is `{class, tag, [type], constructed}` plus `children`

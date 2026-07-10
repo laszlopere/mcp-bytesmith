@@ -2273,6 +2273,405 @@ def codepoints(
     return {"count": len(chars), "chars": chars}
 
 
+# --- password_hash (§2.4.1 / §1.2.1-4, merges hash + verify) -------------------
+# A password hash is a *storage string*: the scheme, its cost parameters, the
+# salt and the digest, all in one self-describing token that verify() can read
+# back. bcrypt and argon2 have canonical such strings ($2b$… / PHC), so we emit
+# theirs verbatim. scrypt and pbkdf2 have no single blessed encoding, so we emit
+# PHC-shaped ones of our own (documented on the tool) and parse them back.
+#
+# Gating is per-variant (§2.0.7), not per-tool: scrypt/pbkdf2 are hashlib, so
+# they always work; bcrypt/argon2* need the `crypto` extra and say so when it is
+# absent — exactly how hash() treats the xxhash algorithms.
+_ARGON2_SCHEMES = ("argon2i", "argon2d", "argon2id")
+_PBKDF2_PRFS = ("sha1", "sha256", "sha512")
+
+# Cost ceilings. A password hash is meant to be slow, so an over-large parameter
+# is not a slow answer, it is a hung server or an OOM. These bound each knob to
+# well past any real deployment (argon2 at 1 GiB, scrypt ln=20 at 1 GiB, pbkdf2
+# at 10M iterations, bcrypt at cost 16 ≈ 10 s).
+_COST_LIMITS: dict[str, tuple[int, int]] = {
+    "rounds": (4, 16),  # bcrypt
+    "time_cost": (1, 16),  # argon2
+    "memory_cost": (8, 1 << 20),  # argon2, KiB
+    "parallelism": (1, 16),  # argon2
+    "ln": (1, 20),  # scrypt, log2(n)
+    "r": (1, 32),  # scrypt
+    "p": (1, 16),  # scrypt
+    "iterations": (1, 10_000_000),  # pbkdf2
+    "hash_len": (4, 128),  # argon2
+    "dklen": (4, 128),  # scrypt, pbkdf2
+}
+_DEFAULT_PARAMS: dict[str, dict[str, Any]] = {
+    "bcrypt": {"rounds": 12},
+    "argon2": {"time_cost": 3, "memory_cost": 65536, "parallelism": 4, "hash_len": 32},
+    "scrypt": {"ln": 14, "r": 8, "p": 1, "dklen": 32},
+    "pbkdf2": {"iterations": 600_000, "prf": "sha256", "dklen": 32},
+}
+
+
+def _b64e(raw: bytes) -> str:
+    """Standard base64, padding stripped — the PHC string's field encoding."""
+    return base64.b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _b64d(text: str) -> bytes:
+    try:  # validate=True — b64decode otherwise skips junk instead of rejecting it
+        return base64.b64decode(text + "=" * (-len(text) % 4), validate=True)
+    except binascii.Error as exc:
+        raise ValueError(f"invalid base64 field in `encoded`: {text!r}") from exc
+
+
+def _cost(params: dict[str, Any], name: str) -> int:
+    """Read one cost knob, enforcing its int-ness and its ceiling."""
+    value = params[name]
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise ValueError(f"param {name!r} must be an integer, got {value!r}")
+    low, high = _COST_LIMITS[name]
+    if not low <= value <= high:
+        raise ValueError(f"param {name!r}={value} is outside {low}..{high}")
+    return value
+
+
+def _merge_params(scheme: str, params: dict[str, Any] | None) -> dict[str, Any]:
+    """Overlay caller params on the scheme's defaults, rejecting unknown keys."""
+    key = "argon2" if scheme in _ARGON2_SCHEMES else scheme
+    merged = dict(_DEFAULT_PARAMS[key])
+    for name, value in (params or {}).items():
+        if name not in merged:
+            raise ValueError(
+                f"unknown param {name!r} for scheme {scheme!r}; "
+                f"expected any of {sorted(merged)}"
+            )
+        merged[name] = value
+    if key == "pbkdf2" and merged["prf"] not in _PBKDF2_PRFS:
+        raise ValueError(
+            f"unknown prf {merged['prf']!r}; expected one of {_PBKDF2_PRFS}"
+        )
+    for name in merged:
+        if name != "prf":
+            _cost(merged, name)
+    return merged
+
+
+def _bcrypt_module() -> Any:
+    try:
+        import bcrypt
+    except ImportError as exc:
+        raise ValueError(
+            "scheme 'bcrypt' requires the 'crypto' extra "
+            "(install mcp-bytesmith[crypto])"
+        ) from exc
+    return bcrypt
+
+
+def _argon2_module() -> Any:
+    try:
+        from argon2 import low_level
+    except ImportError as exc:
+        raise ValueError(
+            "the argon2 schemes require the 'crypto' extra (argon2-cffi; "
+            "install mcp-bytesmith[crypto])"
+        ) from exc
+    return low_level
+
+
+def _argon2_type(low_level: Any, scheme: str) -> Any:
+    """Map an argon2 scheme name to argon2-cffi's Type enum member."""
+    member = {"argon2i": "I", "argon2d": "D", "argon2id": "ID"}[scheme]
+    return getattr(low_level.Type, member)
+
+
+def _argon2_params(encoded: str) -> dict[str, Any]:
+    """Read argon2's cost knobs out of `$argon2id$v=19$m=..,t=..,p=..$salt$hash`.
+
+    Also validates the salt/hash fields, because argon2-cffi reports a corrupt
+    one as a plain VerificationError — indistinguishable from a wrong password,
+    which would turn malformed input into a soft `valid: false` (§2.0.5).
+    """
+    fields = encoded.split("$")
+    if len(fields) != 6:
+        raise ValueError(f"malformed argon2 hash: {encoded!r}")
+    raw = dict(item.partition("=")[::2] for item in fields[3].split(","))
+    try:
+        params = {
+            "memory_cost": int(raw["m"]),
+            "time_cost": int(raw["t"]),
+            "parallelism": int(raw["p"]),
+            "version": int(fields[2].partition("=")[2]),
+        }
+    except (KeyError, ValueError) as exc:
+        raise ValueError(f"malformed argon2 parameters in {encoded!r}") from exc
+    _b64d(fields[4])  # salt
+    _b64d(fields[5])  # digest
+    return params
+
+
+# bcrypt's radix-64 is standard base64's bit packing over a different alphabet,
+# so a straight character translation converts a raw salt into a bcrypt one.
+_BCRYPT_B64 = str.maketrans(
+    string.ascii_uppercase + string.ascii_lowercase + string.digits + "+/",
+    "./" + string.ascii_uppercase + string.ascii_lowercase + string.digits,
+)
+
+
+def _bcrypt_salt(raw: bytes, rounds: int) -> bytes:
+    """Assemble a `$2b$<rounds>$<22-char salt>` prefix from 16 raw salt bytes."""
+    if len(raw) != 16:
+        raise ValueError(f"bcrypt needs a 16-byte salt, got {len(raw)}")
+    body = base64.b64encode(raw).decode("ascii")[:22].translate(_BCRYPT_B64)
+    return f"$2b${rounds:02d}${body}".encode("ascii")
+
+
+def _scrypt(password: bytes, salt: bytes, p: dict[str, Any]) -> bytes:
+    n, r, par = 1 << p["ln"], p["r"], p["p"]
+    # OpenSSL refuses n/r/p whose working set exceeds maxmem; size it to fit.
+    maxmem = 128 * r * (n + par + 2) + (1 << 20)
+    return hashlib.scrypt(
+        password, salt=salt, n=n, r=r, p=par, dklen=p["dklen"], maxmem=maxmem
+    )
+
+
+def _pbkdf2(password: bytes, salt: bytes, p: dict[str, Any]) -> bytes:
+    return hashlib.pbkdf2_hmac(p["prf"], password, salt, p["iterations"], p["dklen"])
+
+
+def _phc_split(encoded: str) -> tuple[str, dict[str, str], bytes, bytes]:
+    """Split `$name$k=v,...$salt$hash` into its four fields (salt/hash decoded)."""
+    fields = encoded.split("$")
+    if len(fields) != 5 or fields[0] != "":
+        raise ValueError(f"malformed password hash: {encoded!r}")
+    _, name, param_str, salt_b64, hash_b64 = fields
+    params: dict[str, str] = {}
+    for item in param_str.split(",") if param_str else []:
+        key, sep, value = item.partition("=")
+        if not sep:
+            raise ValueError(f"malformed parameter {item!r} in {encoded!r}")
+        params[key] = value
+    return name, params, _b64d(salt_b64), _b64d(hash_b64)
+
+
+def _phc_ints(name: str, raw: dict[str, str], keys: tuple[str, ...]) -> dict[str, Any]:
+    """Pull `keys` out of a parsed PHC parameter map as bounded ints."""
+    out: dict[str, Any] = {}
+    for key in keys:
+        if key not in raw:
+            raise ValueError(f"{name} hash is missing the {key!r} parameter")
+        try:
+            out[key] = int(raw[key])
+        except ValueError as exc:
+            raise ValueError(f"{name} parameter {key!r} is not an integer") from exc
+        _cost(out, key)
+    return out
+
+
+def _scheme_of(encoded: str) -> str:
+    """Identify the scheme that wrote `encoded` from its prefix."""
+    if encoded.startswith(("$2a$", "$2b$", "$2x$", "$2y$")):
+        return "bcrypt"
+    name = encoded[1:].partition("$")[0] if encoded.startswith("$") else ""
+    if name in _ARGON2_SCHEMES or name == "scrypt":
+        return name
+    if name.startswith("pbkdf2-"):
+        return "pbkdf2"
+    raise ValueError(
+        f"unrecognized password hash {encoded[:12]!r}...; expected a bcrypt "
+        f"($2b$...), argon2, scrypt, or pbkdf2 string"
+    )
+
+
+def _do_hash(
+    scheme: str, password: bytes, salt: bytes | None, p: dict[str, Any]
+) -> str:
+    if scheme == "bcrypt":
+        if len(password) > 72:
+            raise ValueError(
+                f"bcrypt truncates at 72 bytes; `password` is {len(password)} bytes "
+                f"(pre-hash it, or use an argon2 scheme)"
+            )
+        bcrypt = _bcrypt_module()
+        raw_salt = secrets.token_bytes(16) if salt is None else salt
+        salt_str = _bcrypt_salt(raw_salt, p["rounds"])
+        return bcrypt.hashpw(password, salt_str).decode("ascii")
+
+    if scheme in _ARGON2_SCHEMES:
+        low_level = _argon2_module()
+        if salt is not None and len(salt) < 8:
+            raise ValueError(f"argon2 needs a salt of >=8 bytes, got {len(salt)}")
+        if p["memory_cost"] < 8 * p["parallelism"]:
+            raise ValueError(
+                f"argon2 requires memory_cost >= 8 * parallelism "
+                f"({8 * p['parallelism']}), got {p['memory_cost']}"
+            )
+        return low_level.hash_secret(
+            secret=password,
+            salt=secrets.token_bytes(16) if salt is None else salt,
+            time_cost=p["time_cost"],
+            memory_cost=p["memory_cost"],
+            parallelism=p["parallelism"],
+            hash_len=p["hash_len"],
+            type=_argon2_type(low_level, scheme),
+        ).decode("ascii")
+
+    raw_salt = secrets.token_bytes(16) if salt is None else salt
+    if scheme == "scrypt":
+        digest = _scrypt(password, raw_salt, p)
+        param_str = f"ln={p['ln']},r={p['r']},p={p['p']}"
+        return f"$scrypt${param_str}${_b64e(raw_salt)}${_b64e(digest)}"
+
+    digest = _pbkdf2(password, raw_salt, p)
+    return f"$pbkdf2-{p['prf']}$i={p['iterations']}${_b64e(raw_salt)}${_b64e(digest)}"
+
+
+def _do_verify(
+    scheme: str, encoded: str, password: bytes
+) -> tuple[bool, dict[str, Any]]:
+    """Check `password` against `encoded`; return (valid, the hash's params)."""
+    if scheme == "bcrypt":
+        bcrypt = _bcrypt_module()
+        try:
+            rounds = int(encoded.split("$")[2])
+            valid = bcrypt.checkpw(password, encoded.encode("ascii"))
+        except (IndexError, ValueError, UnicodeEncodeError) as exc:
+            raise ValueError(f"malformed bcrypt hash: {encoded!r}") from exc
+        return valid, {"rounds": rounds}
+
+    if scheme in _ARGON2_SCHEMES:
+        low_level = _argon2_module()
+        from argon2.exceptions import InvalidHashError, VerificationError
+
+        params = _argon2_params(encoded)  # rejects a corrupt string before verifying
+        try:
+            valid = low_level.verify_secret(
+                encoded.encode("ascii"),
+                password,
+                _argon2_type(low_level, scheme),
+            )
+        except (InvalidHashError, UnicodeEncodeError) as exc:
+            raise ValueError(f"malformed argon2 hash: {encoded!r}") from exc
+        except VerificationError:
+            valid = False
+        return valid, params
+
+    name, raw, salt, digest = _phc_split(encoded)
+    if scheme == "scrypt":
+        params = _phc_ints("scrypt", raw, ("ln", "r", "p"))
+        params["dklen"] = len(digest)
+        _cost(params, "dklen")
+        computed = _scrypt(password, salt, params)
+    else:
+        prf = name.partition("-")[2]
+        if prf not in _PBKDF2_PRFS:
+            raise ValueError(f"unknown pbkdf2 prf {prf!r}; expected {_PBKDF2_PRFS}")
+        params = _phc_ints("pbkdf2", {"iterations": raw.get("i", "")}, ("iterations",))
+        params["prf"], params["dklen"] = prf, len(digest)
+        _cost(params, "dklen")
+        computed = _pbkdf2(password, salt, params)
+    return _hmac.compare_digest(computed, digest), params
+
+
+def password_hash(
+    action: Annotated[
+        Literal["hash", "verify"],
+        Field(
+            description="'hash' derives a storage string from `password` (needs "
+            "`scheme`); 'verify' checks `password` against `encoded`."
+        ),
+    ],
+    password: Annotated[
+        str,
+        Field(description="The password, read as UTF-8. Never echoed back."),
+    ],
+    scheme: Annotated[
+        Literal["bcrypt", "argon2i", "argon2d", "argon2id", "scrypt", "pbkdf2"] | None,
+        Field(
+            description="Password-hashing scheme (required for action='hash'). "
+            "bcrypt and the argon2 variants need the `crypto` extra; scrypt and "
+            "pbkdf2 are stdlib. On action='verify' it is read from `encoded`, and "
+            "if given must agree with it. Default None."
+        ),
+    ] = None,
+    encoded: Annotated[
+        str | None,
+        Field(
+            description="The stored hash string to check against (action='verify'). "
+            "Default None."
+        ),
+    ] = None,
+    salt: Annotated[
+        str | None,
+        Field(
+            description="Salt as hex, for reproducible hashing (action='hash'). "
+            "bcrypt needs exactly 16 bytes, argon2 at least 8. Omit — the default "
+            "— to draw 16 fresh CSPRNG bytes, which is what you want in production."
+        ),
+    ] = None,
+    params: Annotated[
+        dict[str, Any] | None,
+        Field(
+            description="Cost parameters overriding the scheme's defaults: bcrypt "
+            "{rounds:12}; argon2 {time_cost:3, memory_cost:65536 (KiB), "
+            "parallelism:4, hash_len:32}; scrypt {ln:14, r:8, p:1, dklen:32}; "
+            "pbkdf2 {iterations:600000, prf:'sha256', dklen:32}. Default None."
+        ),
+    ] = None,
+) -> dict:
+    """Hash a password into a verifiable storage string, or check one against it.
+
+    action=hash (needs `scheme`) returns `encoded`, a self-describing string that
+    carries the scheme, its cost `params` and the salt: bcrypt's `$2b$…` and
+    argon2's PHC string verbatim, and for the stdlib schemes the PHC-shaped
+    `$scrypt$ln=14,r=8,p=1$<salt>$<hash>` / `$pbkdf2-sha256$i=600000$<salt>$<hash>`
+    (base64 fields, padding stripped). action=verify reads the scheme back out of
+    `encoded` and returns `{"valid": true|false}` — a wrong password is a result,
+    not an error (§2.0.5); only a malformed `encoded` raises. The password itself
+    is never echoed (§2.0.6). bcrypt/argon2* need the `crypto` extra.
+    Example: password_hash("hash", "hunter2", scheme="pbkdf2",
+    params={"iterations": 100000}) -> {"encoded": "$pbkdf2-sha256$i=100000$..."}
+    """
+    secret = password.encode("utf-8")
+
+    if action == "hash":
+        if scheme is None:
+            raise ValueError(
+                "action=hash requires `scheme` (bcrypt|argon2i|argon2d|argon2id|"
+                "scrypt|pbkdf2)"
+            )
+        merged = _merge_params(scheme, params)
+        raw_salt = _to_bytes(salt, "hex") if salt is not None else None
+        if raw_salt is not None and not raw_salt:
+            # Empty is not "absent": silently swapping in a random salt would
+            # break the determinism the caller passed a salt to get.
+            raise ValueError("`salt` is empty; omit it to draw a random one")
+        return {
+            "action": "hash",
+            "scheme": scheme,
+            "encoded": _do_hash(scheme, secret, raw_salt, merged),
+            "params": merged,
+        }
+
+    if action == "verify":
+        if encoded is None:
+            raise ValueError("action=verify requires `encoded`")
+        found = _scheme_of(encoded)
+        if scheme is not None and scheme != found:
+            raise ValueError(
+                f"`encoded` is a {found!r} hash, but `scheme` says {scheme!r}"
+            )
+        valid, found_params = _do_verify(found, encoded, secret)
+        out: dict[str, Any] = {
+            "action": "verify",
+            "valid": valid,
+            "scheme": found,
+            "params": found_params,
+        }
+        if not valid:
+            out["reason"] = "password does not match the given hash"
+        return out
+
+    raise ValueError(f"unknown action {action!r}; expected 'hash' or 'verify'")
+
+
 # --- random (§2.5.1 / §1.11.4, merges random_bytes + random_token + passphrase)
 # All entropy comes from `secrets` (the CSPRNG), never `random`. The byte-derived
 # kinds (bytes/hex/urlsafe) are sized by `nbytes`; `token` is sized by character
@@ -2403,4 +2802,5 @@ def register(mcp) -> None:
     mcp.tool()(string_escape)
     mcp.tool()(string_unescape)
     mcp.tool()(codepoints)
+    mcp.tool()(password_hash)
     mcp.tool()(random)

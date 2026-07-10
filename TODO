@@ -382,10 +382,10 @@ Checkbox legend:  [ ] not started   [~] in progress   [x] done
 
 
 [ ] 13.  DERIVE  —  deterministic derivation of keys / secrets / addresses
-    [ ] 13.1.  password_hash(action req, password req, scheme opt, encoded opt,
+    [x] 13.1.  password_hash(action req, password req, scheme opt, encoded opt,
                salt opt, params opt)                        -> §1.2.1-4
                desc: Hash a password into a verifiable storage string, or check one against it.
-               gate: crypto
+               gate: stdlib; scheme=bcrypt|argon2* needs crypto  (per-variant, §2.0.7)
                merges: hash + verify  (dual-op via action)
                action=hash   (needs scheme) -> {scheme, encoded, params}
                action=verify (needs encoded)-> {valid:bool, scheme}  (soft)
