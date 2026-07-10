@@ -2333,24 +2333,42 @@ def _cost(params: dict[str, Any], name: str) -> int:
     return value
 
 
-def _merge_params(scheme: str, params: dict[str, Any] | None) -> dict[str, Any]:
-    """Overlay caller params on the scheme's defaults, rejecting unknown keys."""
-    key = "argon2" if scheme in _ARGON2_SCHEMES else scheme
-    merged = dict(_DEFAULT_PARAMS[key])
+def _merge_params(
+    label: str,
+    params: dict[str, Any] | None,
+    defaults: dict[str, Any],
+    text_keys: tuple[str, ...] = (),
+) -> dict[str, Any]:
+    """Overlay caller params on `defaults`, rejecting unknown keys.
+
+    Every key but `text_keys` is a cost knob and is bounds-checked. `label`
+    names the variant in the error ("scheme 'pbkdf2'" / "kdf 'hkdf'"), so the
+    model is told which parameter set it got wrong. Shared by password_hash
+    (§2.4.1) and derive_key (§2.4.2).
+    """
+    merged = dict(defaults)
     for name, value in (params or {}).items():
         if name not in merged:
             raise ValueError(
-                f"unknown param {name!r} for scheme {scheme!r}; "
-                f"expected any of {sorted(merged)}"
+                f"unknown param {name!r} for {label}; expected any of {sorted(merged)}"
             )
         merged[name] = value
+    for name in merged:
+        if name not in text_keys:
+            _cost(merged, name)
+    return merged
+
+
+def _hash_params(scheme: str, params: dict[str, Any] | None) -> dict[str, Any]:
+    """password_hash's parameter merge: per-scheme defaults, plus the prf enum."""
+    key = "argon2" if scheme in _ARGON2_SCHEMES else scheme
+    merged = _merge_params(
+        f"scheme {scheme!r}", params, _DEFAULT_PARAMS[key], text_keys=("prf",)
+    )
     if key == "pbkdf2" and merged["prf"] not in _PBKDF2_PRFS:
         raise ValueError(
             f"unknown prf {merged['prf']!r}; expected one of {_PBKDF2_PRFS}"
         )
-    for name in merged:
-        if name != "prf":
-            _cost(merged, name)
     return merged
 
 
@@ -2637,7 +2655,7 @@ def password_hash(
                 "action=hash requires `scheme` (bcrypt|argon2i|argon2d|argon2id|"
                 "scrypt|pbkdf2)"
             )
-        merged = _merge_params(scheme, params)
+        merged = _hash_params(scheme, params)
         raw_salt = _to_bytes(salt, "hex") if salt is not None else None
         if raw_salt is not None and not raw_salt:
             # Empty is not "absent": silently swapping in a random salt would
@@ -2670,6 +2688,148 @@ def password_hash(
         return out
 
     raise ValueError(f"unknown action {action!r}; expected 'hash' or 'verify'")
+
+
+# --- derive_key (§2.4.2 / §1.2.3-4) -------------------------------------------
+# The other half of §2.4: password_hash produces a string to STORE and compare,
+# derive_key produces raw key BYTES to use. Same primitives, opposite purpose —
+# so this one is deterministic end to end: an omitted salt means "no salt", never
+# a fresh random one (that would hand back an unreproducible key), and the salt
+# actually used is echoed so the derivation can be repeated.
+#
+# pbkdf2/scrypt are hashlib; hkdf (RFC 5869) is ~10 lines of hmac, so the whole
+# tool is stdlib — no extra, no per-variant gate.
+_HKDF_HASHES = ("sha1", "sha256", "sha384", "sha512")
+_MAX_KEY_LENGTH = 1024  # far past any real key; bounds the caller-chosen output
+_KDF_DEFAULTS: dict[str, dict[str, Any]] = {
+    "pbkdf2": {"iterations": 600_000, "prf": "sha256"},
+    "scrypt": {"ln": 14, "r": 8, "p": 1},
+    "hkdf": {"hash": "sha256", "info": ""},
+}
+# Which of each KDF's params are text rather than bounds-checked cost knobs.
+_KDF_TEXT_KEYS: dict[str, tuple[str, ...]] = {
+    "pbkdf2": ("prf",),
+    "scrypt": (),
+    "hkdf": ("hash", "info"),
+}
+
+
+def _hkdf(ikm: bytes, salt: bytes, info: bytes, hash_name: str, length: int) -> bytes:
+    """RFC 5869 HKDF: extract a pseudorandom key, then expand it to `length`.
+
+    An empty `salt` is the RFC's "not provided" case: HMAC zero-pads a short key
+    to the block size, so HMAC(b"", ...) is already HMAC(zeros(HashLen), ...).
+    """
+    hash_len = hashlib.new(hash_name).digest_size
+    if length > 255 * hash_len:  # the RFC's ceiling on the expand counter
+        raise ValueError(
+            f"hkdf with {hash_name} cannot derive more than "
+            f"{255 * hash_len} bytes, asked for {length}"
+        )
+    prk = _hmac.new(salt, ikm, hash_name).digest()  # extract
+    okm, block = b"", b""
+    for counter in range(1, -(-length // hash_len) + 1):  # expand, ceil-div blocks
+        block = _hmac.new(prk, block + info + bytes([counter]), hash_name).digest()
+        okm += block
+    return okm[:length]
+
+
+def derive_key(
+    password: Annotated[
+        str,
+        Field(
+            description="The password, secret, or input keying material, read as "
+            "UTF-8. Never echoed back."
+        ),
+    ],
+    kdf: Annotated[
+        Literal["pbkdf2", "scrypt", "hkdf"],
+        Field(
+            description="Key-derivation function. 'pbkdf2'/'scrypt' stretch a "
+            "low-entropy password (slow by design); 'hkdf' (RFC 5869) expands an "
+            "already-high-entropy secret and is fast — do NOT use it on a "
+            "password. Default 'pbkdf2'."
+        ),
+    ] = "pbkdf2",
+    salt: Annotated[
+        str | None,
+        Field(
+            description="Salt as hex. Omitted means NO salt (an empty one), which "
+            "keeps the derivation reproducible — this tool never invents a random "
+            "salt, since the key would be unrecoverable. For pbkdf2/scrypt pass a "
+            "real salt (16 random bytes); for hkdf omitting it is the RFC default. "
+            "Echoed back as `salt`."
+        ),
+    ] = None,
+    length: Annotated[
+        int,
+        Field(description="Derived key length in bytes (1..1024). Default 32."),
+    ] = 32,
+    params: Annotated[
+        dict[str, Any] | None,
+        Field(
+            description="KDF parameters overriding the defaults: pbkdf2 "
+            "{iterations:600000, prf:'sha256'}; scrypt {ln:14, r:8, p:1}; hkdf "
+            "{hash:'sha256', info:''} where `info` is a UTF-8 context label that "
+            "binds the key to a purpose. Default None."
+        ),
+    ] = None,
+    output_format: Annotated[
+        Literal["hex", "base64"],
+        Field(description="How the key is rendered (bare hex, no 0x); default 'hex'."),
+    ] = "hex",
+) -> dict:
+    """Derive raw key bytes from a password or secret via a KDF (PBKDF2/scrypt/HKDF).
+
+    Returns the `key` rendered per `output_format`, plus the `kdf`, `length`,
+    `salt` and `params` actually used — everything needed to repeat the
+    derivation. Fully deterministic: the same inputs always give the same key, so
+    an omitted `salt` means an empty one rather than a fresh random one. Use
+    pbkdf2/scrypt to stretch a human password, and hkdf only to expand a secret
+    that is already high-entropy (a shared secret, another key). To STORE a
+    password for later checking, use `password_hash` instead — its output is a
+    self-describing string built to be compared against.
+    Example: derive_key("hunter2", kdf="pbkdf2", salt="0011223344556677",
+    length=32) -> {"key": "a3f1...", "params": {"iterations": 600000, ...}}
+    """
+    if kdf not in _KDF_DEFAULTS:
+        raise ValueError(f"unknown kdf {kdf!r}; expected pbkdf2|scrypt|hkdf")
+    if not 1 <= length <= _MAX_KEY_LENGTH:
+        raise ValueError(f"`length`={length} is outside 1..{_MAX_KEY_LENGTH} bytes")
+
+    merged = _merge_params(
+        f"kdf {kdf!r}", params, _KDF_DEFAULTS[kdf], _KDF_TEXT_KEYS[kdf]
+    )
+    raw_salt = _to_bytes(salt, "hex") if salt is not None else b""
+    secret = password.encode("utf-8")
+
+    if kdf == "pbkdf2":
+        if merged["prf"] not in _PBKDF2_PRFS:
+            raise ValueError(
+                f"unknown prf {merged['prf']!r}; expected one of {_PBKDF2_PRFS}"
+            )
+        raw = _pbkdf2(secret, raw_salt, {**merged, "dklen": length})
+    elif kdf == "scrypt":
+        raw = _scrypt(secret, raw_salt, {**merged, "dklen": length})
+    else:
+        if merged["hash"] not in _HKDF_HASHES:
+            raise ValueError(
+                f"unknown hash {merged['hash']!r}; expected one of {_HKDF_HASHES}"
+            )
+        if not isinstance(merged["info"], str):
+            raise ValueError(f"param 'info' must be a string, got {merged['info']!r}")
+        raw = _hkdf(
+            secret, raw_salt, merged["info"].encode("utf-8"), merged["hash"], length
+        )
+
+    return {
+        "kdf": kdf,
+        "key": _render(raw, output_format),
+        "length": length,
+        "salt": raw_salt.hex(),
+        "params": merged,
+        "output_format": output_format,
+    }
 
 
 # --- random (§2.5.1 / §1.11.4, merges random_bytes + random_token + passphrase)
@@ -2803,4 +2963,5 @@ def register(mcp) -> None:
     mcp.tool()(string_unescape)
     mcp.tool()(codepoints)
     mcp.tool()(password_hash)
+    mcp.tool()(derive_key)
     mcp.tool()(random)

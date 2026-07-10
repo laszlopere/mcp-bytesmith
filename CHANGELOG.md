@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `derive_key` — derive raw key bytes from a password or secret via `pbkdf2`
+  (default), `scrypt`, or `hkdf` (RFC 5869, hand-rolled on `hmac`), rendered as
+  hex or base64. Entirely stdlib, so no extra is needed. Deterministic by
+  construction: an omitted `salt` means an empty one rather than a fresh random
+  one — a random salt would return a key nobody could reproduce — and the salt
+  actually used is echoed back alongside the `kdf`, `length` and `params`.
+  HKDF's `info` parameter binds a derived key to a purpose. Key `length` is
+  bounded to 1..1024 bytes and cost parameters share `password_hash`'s ceilings.
+  The password is never echoed back. Use `password_hash` instead when the goal
+  is a string to store and compare.
 - `password_hash` — hash a password into a verifiable storage string, or verify
   one against it (`action=hash|verify`). Six schemes: `bcrypt` and `argon2i` /
   `argon2d` / `argon2id` (from the `crypto` extra, which now also installs

@@ -390,7 +390,7 @@ Checkbox legend:  [ ] not started   [~] in progress   [x] done
                action=hash   (needs scheme) -> {scheme, encoded, params}
                action=verify (needs encoded)-> {valid:bool, scheme}  (soft)
                scheme: bcrypt argon2i argon2d argon2id scrypt pbkdf2
-    [ ] 13.2.  derive_key(password req, kdf opt=pbkdf2, salt opt, length opt=32,
+    [x] 13.2.  derive_key(password req, kdf opt=pbkdf2, salt opt, length opt=32,
                params opt, output_format opt=hex)           -> §1.2.3-4
                desc: Derive raw key bytes from a password/secret via a KDF (PBKDF2/scrypt/HKDF).
                gate: stdlib  (pbkdf2/scrypt stdlib; hkdf hand-rolled on hmac)

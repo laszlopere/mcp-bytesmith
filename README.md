@@ -34,7 +34,9 @@ character-set work, `string_escape`/`string_unescape` for JSON/JS/Python/C
 escaping, `codepoints` for per-scalar Unicode inspection, and `random` for
 CSPRNG-backed bytes, tokens, and passphrases. `password_hash` turns a password
 into a verifiable storage string and checks one back — scrypt and PBKDF2 out of
-the box, bcrypt and the argon2 variants with the `crypto` extra.
+the box, bcrypt and the argon2 variants with the `crypto` extra — while
+`derive_key` derives raw key bytes from a password or secret via PBKDF2, scrypt,
+or HKDF.
 
 An opt-in **Ethereum/EVM toolset** (enabled via the `ethereum` extra) adds the
 primitives you reach for when working on-chain: `eth_hash` for keccak-256,
