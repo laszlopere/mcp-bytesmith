@@ -62,14 +62,20 @@ def test_asn1_integer_negative_and_large():
     # INTEGER -128 -> 02 01 80 ; INTEGER 128 -> 02 02 00 80 (leading zero for sign).
     assert SC("asn1", "decode", "020180")["decoded"]["value"] == -128
     assert SC("asn1", "decode", "02020080")["decoded"]["value"] == 128
-    assert SC("asn1", "encode", {"type": "integer", "value": 128})["encoded"] == "02020080"
-    assert SC("asn1", "encode", {"type": "integer", "value": -128})["encoded"] == "020180"
+    assert (
+        SC("asn1", "encode", {"type": "integer", "value": 128})["encoded"] == "02020080"
+    )
+    assert (
+        SC("asn1", "encode", {"type": "integer", "value": -128})["encoded"] == "020180"
+    )
 
 
 def test_asn1_boolean():
     assert SC("asn1", "decode", "0101ff")["decoded"]["value"] is True
     assert SC("asn1", "decode", "010100")["decoded"]["value"] is False
-    assert SC("asn1", "encode", {"type": "boolean", "value": True})["encoded"] == "0101ff"
+    assert (
+        SC("asn1", "encode", {"type": "boolean", "value": True})["encoded"] == "0101ff"
+    )
 
 
 def test_asn1_null():
@@ -87,7 +93,9 @@ def test_asn1_object_identifier():
 
 def test_asn1_oid_first_arc_forms():
     # 2.100.3 exercises a second arc > 39 (only legal when the first arc is 2).
-    enc = SC("asn1", "encode", {"type": "object_identifier", "value": "2.100.3"})["encoded"]
+    enc = SC("asn1", "encode", {"type": "object_identifier", "value": "2.100.3"})[
+        "encoded"
+    ]
     assert SC("asn1", "decode", enc)["decoded"]["value"] == "2.100.3"
 
 
@@ -128,10 +136,14 @@ def test_asn1_algorithm_identifier_roundtrip():
 
 def test_asn1_encode_list_of_values():
     # A JSON array encodes as several concatenated top-level TLVs.
-    out = SC("asn1", "encode", [
-        {"type": "integer", "value": 1},
-        {"type": "integer", "value": 2},
-    ])["encoded"]
+    out = SC(
+        "asn1",
+        "encode",
+        [
+            {"type": "integer", "value": 1},
+            {"type": "integer", "value": 2},
+        ],
+    )["encoded"]
     assert out == "020101020102"
 
 
@@ -210,7 +222,10 @@ def test_ssz_container_fixed_known_vector():
     r = _ssz("encode", {"a": 1, "b": True}, schema)
     assert r["encoded"] == "010000000000000001"
     # root independently confirmed against remerkleable.
-    assert r["root"] == "0x56d8a66fbae0300efba7ec2c531973aaae22e7a2ed6ded081b5b32d07a32780a"
+    assert (
+        r["root"]
+        == "0x56d8a66fbae0300efba7ec2c531973aaae22e7a2ed6ded081b5b32d07a32780a"
+    )
     assert _ssz("decode", r["encoded"], schema)["decoded"] == {"a": 1, "b": True}
 
 
@@ -218,7 +233,10 @@ def test_ssz_container_with_variable_list_field_offsets():
     # a fixed uint64 followed by a variable List[uint8, 32] → a 4-byte offset.
     schema = {
         "type": "container",
-        "fields": [["a", "uint64"], ["b", {"type": "list", "element": "uint8", "limit": 32}]],
+        "fields": [
+            ["a", "uint64"],
+            ["b", {"type": "list", "element": "uint8", "limit": 32}],
+        ],
     }
     value = {"a": 1, "b": [1, 2, 3, 4]}
     r = _ssz("encode", value, schema)
@@ -239,7 +257,10 @@ def test_ssz_list_uint8_known_vector():
     schema = {"type": "list", "element": "uint8", "limit": 32}
     r = _ssz("encode", [1, 2, 3, 4], schema)
     assert r["encoded"] == "01020304"
-    assert r["root"] == "0x95c1f630b7a8428b56d51da4dfaece951967a7035968222ffb560e7c78cd4235"
+    assert (
+        r["root"]
+        == "0x95c1f630b7a8428b56d51da4dfaece951967a7035968222ffb560e7c78cd4235"
+    )
     assert _ssz("decode", r["encoded"], schema)["decoded"] == [1, 2, 3, 4]
 
 
@@ -275,16 +296,25 @@ def test_ssz_bitlist_known_vector():
     r = _ssz("encode", bits, schema)
     assert r["encoded"] == "6d"  # bits 0b101101 + delimiter bit at index 6
     # root independently confirmed against remerkleable.
-    assert r["root"] == "0xe1c705529bd78c7569d410ec93e657dc2bf2915a638d2c37e7729d7f9ad305c7"
+    assert (
+        r["root"]
+        == "0xe1c705529bd78c7569d410ec93e657dc2bf2915a638d2c37e7729d7f9ad305c7"
+    )
     assert _ssz("decode", r["encoded"], schema)["decoded"] == bits
 
 
 def test_ssz_bytevector_and_bytelist():
     r = _ssz("encode", "0xdeadbeef", {"type": "bytevector", "length": 4})
     assert r["encoded"] == "deadbeef"
-    assert _ssz("decode", "deadbeef", {"type": "bytevector", "length": 4})["decoded"] == "0xdeadbeef"
+    assert (
+        _ssz("decode", "deadbeef", {"type": "bytevector", "length": 4})["decoded"]
+        == "0xdeadbeef"
+    )
     r2 = _ssz("encode", "0xcafe", {"type": "bytelist", "limit": 8})
-    assert _ssz("decode", r2["encoded"], {"type": "bytelist", "limit": 8})["decoded"] == "0xcafe"
+    assert (
+        _ssz("decode", r2["encoded"], {"type": "bytelist", "limit": 8})["decoded"]
+        == "0xcafe"
+    )
 
 
 # --- ssz error paths -----------------------------------------------------------

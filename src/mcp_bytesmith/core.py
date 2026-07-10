@@ -46,7 +46,14 @@ from email.utils import format_datetime, parsedate_to_datetime
 from importlib.resources import files
 from pathlib import Path
 from typing import Annotated, Any, Literal
-from urllib.parse import parse_qsl, quote, quote_plus, unquote, unquote_to_bytes, urlsplit
+from urllib.parse import (
+    parse_qsl,
+    quote,
+    quote_plus,
+    unquote,
+    unquote_to_bytes,
+    urlsplit,
+)
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import Field
@@ -1615,7 +1622,9 @@ def otpauth_uri(
     ] = None,
     uri: Annotated[
         str | None,
-        Field(description="The 'otpauth://...' URI to parse (action=parse). Default None."),
+        Field(
+            description="The 'otpauth://...' URI to parse (action=parse). Default None."
+        ),
     ] = None,
 ) -> dict:
     """Build an otpauth:// provisioning URI from parts, or parse one (Key URI Format).
@@ -1669,7 +1678,9 @@ def otpauth_uri(
             raise ValueError("not an otpauth: URI (must start with 'otpauth://')")
         kind = parts.netloc.lower()
         if kind not in ("totp", "hotp"):
-            raise ValueError(f"unknown otpauth type {parts.netloc!r}; expected totp/hotp")
+            raise ValueError(
+                f"unknown otpauth type {parts.netloc!r}; expected totp/hotp"
+            )
 
         decoded_label = unquote(parts.path.lstrip("/"))
         query = dict(parse_qsl(parts.query))

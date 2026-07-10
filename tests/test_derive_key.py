@@ -42,7 +42,11 @@ FAST = {"pbkdf2": {"iterations": 1000}, "scrypt": {"ln": 8}, "hkdf": {}}
 # takes them as UTF-8 text / hex), so these drive the internal primitive.
 RFC5869 = [
     (  # A.1 — basic, SHA-256
-        "sha256", "0b" * 22, "000102030405060708090a0b0c", "f0f1f2f3f4f5f6f7f8f9", 42,
+        "sha256",
+        "0b" * 22,
+        "000102030405060708090a0b0c",
+        "f0f1f2f3f4f5f6f7f8f9",
+        42,
         "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf"
         "34007208d5b887185865",
     ),
@@ -57,17 +61,29 @@ RFC5869 = [
         "cc30c58179ec3e87c14c01d5c1f3434f1d87",
     ),
     (  # A.3 — zero-length salt and info
-        "sha256", "0b" * 22, "", "", 42,
+        "sha256",
+        "0b" * 22,
+        "",
+        "",
+        42,
         "8da4e775a563c18f715f802a063c5a31b8a11f5c5ee1879ec3454e5f3c738d2d"
         "9d201395faa4b61a96c8",
     ),
     (  # A.4 — SHA-1
-        "sha1", "0b" * 11, "000102030405060708090a0b0c", "f0f1f2f3f4f5f6f7f8f9", 42,
+        "sha1",
+        "0b" * 11,
+        "000102030405060708090a0b0c",
+        "f0f1f2f3f4f5f6f7f8f9",
+        42,
         "085a01ea1b10f36933068b56efa5ad81a4f14b822f5b091568a9cdd4f155fda2"
         "c22e422478d305f3f896",
     ),
     (  # A.5 — SHA-1, zero-length salt and info
-        "sha1", "0c" * 22, "", "", 42,
+        "sha1",
+        "0c" * 22,
+        "",
+        "",
+        42,
         "2c91117204d745f3500d636a62f64f0ab3bae548aa53d423b0d1f27ebba6f5e5"
         "673a081d70cce7acfc48",
     ),
@@ -117,7 +133,10 @@ def test_pbkdf2_matches_rfc6070_vector():
 def test_scrypt_matches_rfc7914_vector():
     # RFC 7914 §12: P="password", S="NaCl", N=1024, r=8, p=16, dkLen=64.
     out = DK(
-        "password", kdf="scrypt", salt=b"NaCl".hex(), length=64,
+        "password",
+        kdf="scrypt",
+        salt=b"NaCl".hex(),
+        length=64,
         params={"ln": 10, "r": 8, "p": 16},
     )
     assert out["key"].startswith("fdbabe1c9d3472007856e7190d01e9fe")

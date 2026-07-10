@@ -202,7 +202,10 @@ def test_argon2_variants_are_distinct_and_report_their_costs():
         out = PH("verify", "hunter2", encoded=encoded)
         assert out["scheme"] == scheme and out["valid"] is True
         assert out["params"] == {
-            "memory_cost": 256, "time_cost": 1, "parallelism": 1, "version": 19,
+            "memory_cost": 256,
+            "time_cost": 1,
+            "parallelism": 1,
+            "version": 19,
         }
     assert len(set(encodings.values())) == 3
 

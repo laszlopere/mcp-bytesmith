@@ -58,7 +58,9 @@ def test_build_issuer_prefix_not_duplicated():
 
 
 def test_build_percent_encodes_issuer_and_label():
-    uri = _build(label="john.doe@email.com", secret="JBSWY3DPEHPK3PXP", issuer="ACME Co")
+    uri = _build(
+        label="john.doe@email.com", secret="JBSWY3DPEHPK3PXP", issuer="ACME Co"
+    )
     assert uri == (
         "otpauth://totp/ACME%20Co:john.doe@email.com"
         "?secret=JBSWY3DPEHPK3PXP&issuer=ACME%20Co"
@@ -70,8 +72,7 @@ def test_build_all_totp_params():
         label="a", secret="JBSWY3DPEHPK3PXP", digits=8, period=60, algorithm="sha256"
     )
     assert uri == (
-        "otpauth://totp/a?secret=JBSWY3DPEHPK3PXP"
-        "&algorithm=SHA256&digits=8&period=60"
+        "otpauth://totp/a?secret=JBSWY3DPEHPK3PXP&algorithm=SHA256&digits=8&period=60"
     )
 
 
@@ -158,9 +159,7 @@ def test_parse_hotp_counter():
 
 
 def test_parse_custom_params():
-    out = _parse(
-        "otpauth://totp/a?secret=AAAA&algorithm=SHA512&digits=8&period=60"
-    )
+    out = _parse("otpauth://totp/a?secret=AAAA&algorithm=SHA512&digits=8&period=60")
     assert out["algorithm"] == "SHA512"
     assert out["digits"] == 8
     assert out["period"] == 60

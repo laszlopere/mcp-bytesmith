@@ -306,7 +306,8 @@ def _oid_encode(oid: str) -> bytes:
 
 def _asn1_int_encode(n: int) -> bytes:
     """Two's-complement minimal-length INTEGER content (DER)."""
-    length = (n if n >= 0 else ~n).bit_length() // 8 + 1  # ~n handles negative powers of two
+    magnitude = n if n >= 0 else ~n  # ~n handles negative powers of two
+    length = magnitude.bit_length() // 8 + 1
     return n.to_bytes(length, "big", signed=True)
 
 
@@ -377,7 +378,9 @@ def _asn1_encode_node(node: Any, parser) -> bytes:
     else:
         raise ValueError("an ASN.1 node needs a `tag` or a universal `type`")
     if node.get("constructed", "children" in node):
-        content = b"".join(_asn1_encode_node(c, parser) for c in node.get("children", []))
+        content = b"".join(
+            _asn1_encode_node(c, parser) for c in node.get("children", [])
+        )
         return parser.emit(class_, 1, tag, content)
     return parser.emit(class_, 0, tag, _asn1_encode_primitive(node, class_, tag))
 
@@ -694,7 +697,9 @@ def _ssz_htr(schema: Any, value: Any) -> bytes:
         root = _merkleize(_ssz_pack(raw), (int(s["limit"]) + 31) // 32)
         return _mix_in_length(root, len(raw))
     if t == "bitvector":
-        return _merkleize(_ssz_pack(_ssz_serialize(s, value)), (int(s["length"]) + 255) // 256)
+        return _merkleize(
+            _ssz_pack(_ssz_serialize(s, value)), (int(s["length"]) + 255) // 256
+        )
     if t == "bitlist":
         packed = _ssz_pack_bits([_ssz_bit(b) for b in value], (len(value) + 7) // 8)
         root = _merkleize(_ssz_pack(packed), (int(s["limit"]) + 255) // 256)
