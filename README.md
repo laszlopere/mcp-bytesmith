@@ -44,6 +44,7 @@ EIP-191, and EIP-712 typed-data hashing, `abi_codec` and `rlp_codec` for ABI and
 RLP encode/decode, `eth_selector` for function and event selectors, `eth_tx_codec`
 for transactions, `eth_storage_slot` for storage layout, `eth_address_case`
 for EIP-55 checksums, `ens_namehash` for EIP-137 ENS namehash/labelhash,
+`bip39` for BIP-39 mnemonic generation, validation, and seed derivation,
 `bip32_derive` for BIP-32/44 HD key and address derivation from a seed,
 `eth_eoa_address` for the address and public key behind a private key, and
 `eth_contract_address` for CREATE and CREATE2 deployment addresses. An
@@ -92,3 +93,10 @@ The bundled passphrase wordlist
 used by the `random` tool's `passphrase` kind) is the EFF "large" wordlist by the
 [Electronic Frontier Foundation](https://www.eff.org/dice), licensed
 [CC BY 3.0 US](https://creativecommons.org/licenses/by/3.0/us/).
+
+The bundled BIP-39 wordlist
+([`src/mcp_bytesmith/wordlists/bip39_english.txt`](./src/mcp_bytesmith/wordlists/bip39_english.txt),
+used by the `bip39` tool) is the canonical English wordlist from
+[BIP-39](https://github.com/bitcoin/bips/blob/master/bip-0039/english.txt), which
+falls under the [MIT License](https://github.com/bitcoin/bips/blob/master/bip-0039.mediawiki#copyright).
+Its SHA-256 is `2f5eed53a4727b4bf8880d8f3f199efc90e58503646d9ff8eff3a2ed3b24dbda`.

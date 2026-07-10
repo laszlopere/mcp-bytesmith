@@ -381,7 +381,7 @@ Checkbox legend:  [ ] not started   [~] in progress   [x] done
                      utf8:hex, utf16:hex, utf32:hex}]}
 
 
-[ ] 13.  DERIVE  —  deterministic derivation of keys / secrets / addresses
+[x] 13.  DERIVE  —  deterministic derivation of keys / secrets / addresses
     [x] 13.1.  password_hash(action req, password req, scheme opt, encoded opt,
                salt opt, params opt)                        -> §1.2.1-4
                desc: Hash a password into a verifiable storage string, or check one against it.
@@ -410,7 +410,7 @@ Checkbox legend:  [ ] not started   [~] in progress   [x] done
     [x] 13.5.  eth_storage_slot(layout req, key opt, index opt)   -> §1.15.4
                desc: Compute the storage slot for a mapping/array entry given a layout.
                gate: ethereum  [MAYBE — defer]
-    [ ] 13.6.  bip39(action req, mnemonic opt, entropy opt, passphrase opt)
+    [x] 13.6.  bip39(action req, mnemonic opt, entropy opt, passphrase opt)
                desc: Generate, validate, or convert a BIP-39 mnemonic to a seed.
                gate: ethereum  [MAYBE — defer]
                action: generate | to_seed | validate            -> §1.15.1

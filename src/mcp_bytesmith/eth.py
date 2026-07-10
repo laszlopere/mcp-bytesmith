@@ -30,6 +30,9 @@ import base64
 import hashlib
 import hmac
 import json
+import secrets
+import unicodedata
+from importlib.resources import files
 from typing import Annotated, Any, Literal
 
 from pydantic import Field
@@ -1086,6 +1089,212 @@ def eth_contract_address(
     return {"address": _eip55(digest[-20:].hex())}
 
 
+# --- BIP-39 mnemonic <-> seed (§1.15.1) ----------------------------------------
+# A mnemonic encodes ENT bits of entropy (128..256, a multiple of 32) plus an
+# ENT/32-bit checksum — the leading bits of sha256(entropy) — as 11-bit indices
+# into a 2048-word list, giving 12..24 words. The seed that BIP-32 consumes is a
+# separate step: PBKDF2-HMAC-SHA512 over the NFKD mnemonic with salt
+# "mnemonic" + passphrase, 2048 rounds, 64 bytes out. The passphrase is the
+# "25th word": any passphrase yields a valid-looking wallet, so a wrong one
+# silently opens a different (empty) wallet rather than failing.
+#
+# The bundled wordlist is the canonical BIP-39 English list (see README).
+_BIP39_WORDLIST: tuple[str, ...] | None = None
+_BIP39_INDEX: dict[str, int] | None = None
+
+# Legal mnemonic lengths: word count -> entropy bytes. 11 bits/word, and the
+# checksum is ENT/32 bits, so 33 bits of mnemonic carry 32 bits of entropy.
+_BIP39_SIZES = {12: 16, 15: 20, 18: 24, 21: 28, 24: 32}
+
+
+def _bip39_wordlist() -> tuple[str, ...]:
+    """Load (and cache) the bundled BIP-39 English wordlist, one word per line."""
+    global _BIP39_WORDLIST
+    if _BIP39_WORDLIST is None:
+        text = (files("mcp_bytesmith") / "wordlists" / "bip39_english.txt").read_text(
+            "utf-8"
+        )
+        words = tuple(w for w in text.split() if w)
+        if len(words) != 2048:  # 11 bits per word requires exactly 2^11 words
+            raise ValueError(
+                f"BIP-39 wordlist is corrupt: {len(words)} words, want 2048"
+            )
+        _BIP39_WORDLIST = words
+    return _BIP39_WORDLIST
+
+
+def _bip39_index() -> dict[str, int]:
+    """Word -> index lookup over the bundled wordlist."""
+    global _BIP39_INDEX
+    if _BIP39_INDEX is None:
+        _BIP39_INDEX = {w: i for i, w in enumerate(_bip39_wordlist())}
+    return _BIP39_INDEX
+
+
+def _bip39_checksum_bits(entropy: bytes) -> tuple[int, int]:
+    """(checksum value, checksum bit-length) for `entropy` — the sha256 prefix."""
+    bit_len = len(entropy) * 8 // 32  # 4..8 bits, so always inside the first byte
+    return hashlib.sha256(entropy).digest()[0] >> (8 - bit_len), bit_len
+
+
+def _bip39_encode(entropy: bytes) -> str:
+    """Entropy -> a canonical (lowercase, single-spaced) BIP-39 mnemonic."""
+    if len(entropy) not in _BIP39_SIZES.values():
+        raise ValueError(
+            f"entropy must be 16, 20, 24, 28, or 32 bytes, got {len(entropy)}"
+        )
+    checksum, cs_bits = _bip39_checksum_bits(entropy)
+    bits = (int.from_bytes(entropy, "big") << cs_bits) | checksum
+    total = len(entropy) * 8 + cs_bits
+    words = _bip39_wordlist()
+    return " ".join(
+        words[(bits >> (total - 11 * (i + 1))) & 0x7FF] for i in range(total // 11)
+    )
+
+
+def _bip39_split(mnemonic: str) -> list[str]:
+    """NFKD-normalize and split a mnemonic; casing and extra whitespace forgiven."""
+    return unicodedata.normalize("NFKD", mnemonic).lower().split()
+
+
+def _bip39_check(words: list[str]) -> str | None:
+    """None when `words` is a valid mnemonic, else the reason it is not.
+
+    Positions (not the words) are reported for unknown entries: a mnemonic is a
+    secret, so it must not be echoed back even inside an error (§2.0.6).
+    """
+    if len(words) not in _BIP39_SIZES:
+        return f"mnemonic has {len(words)} words; expected 12, 15, 18, 21, or 24"
+    index = _bip39_index()
+    unknown = [i + 1 for i, w in enumerate(words) if w not in index]
+    if unknown:
+        return f"words at position(s) {unknown} are not in the BIP-39 English wordlist"
+    if _bip39_to_entropy(words) is None:
+        return "checksum does not match the mnemonic's entropy (likely a typo)"
+    return None
+
+
+def _bip39_to_entropy(words: list[str]) -> bytes | None:
+    """Recover the entropy behind a wordlist-valid mnemonic; None if the checksum fails."""
+    index = _bip39_index()
+    bits = 0
+    for word in words:
+        bits = (bits << 11) | index[word]
+    total = len(words) * 11
+    cs_bits = total // 33
+    entropy = (bits >> cs_bits).to_bytes((total - cs_bits) // 8, "big")
+    if (bits & ((1 << cs_bits) - 1)) != _bip39_checksum_bits(entropy)[0]:
+        return None
+    return entropy
+
+
+def bip39(
+    action: Annotated[
+        Literal["generate", "validate", "to_seed"],
+        Field(
+            description="'generate' builds a mnemonic (from `entropy`, or fresh "
+            "CSPRNG entropy of `strength` bits); 'validate' checks a mnemonic's "
+            "wordlist membership and checksum; 'to_seed' derives the 64-byte BIP-32 "
+            "seed from a mnemonic and optional `passphrase`."
+        ),
+    ],
+    mnemonic: Annotated[
+        str | None,
+        Field(
+            description="The mnemonic sentence (required for validate/to_seed). "
+            "Casing and extra whitespace are forgiven; it is never echoed back."
+        ),
+    ] = None,
+    entropy: Annotated[
+        str | None,
+        Field(
+            description="Entropy as hex (0x optional) for action=generate: 16, 20, "
+            "24, 28, or 32 bytes, giving 12..24 words. Omit to draw fresh CSPRNG "
+            "entropy of `strength` bits. Never echoed back."
+        ),
+    ] = None,
+    passphrase: Annotated[
+        str,
+        Field(
+            description='The optional BIP-39 passphrase (the "25th word") for '
+            "action=to_seed. Any passphrase is valid and yields a DIFFERENT seed, so "
+            "a wrong one silently opens a different wallet. Never echoed back."
+        ),
+    ] = "",
+    strength: Annotated[
+        Literal[128, 160, 192, 224, 256],
+        Field(
+            description="Entropy bits for action=generate when `entropy` is omitted "
+            "(128 -> 12 words, 256 -> 24 words). Ignored when `entropy` is given."
+        ),
+    ] = 128,
+) -> dict:
+    """Generate, validate, or convert a BIP-39 mnemonic to a seed.
+
+    action=generate -> {action, mnemonic, word_count, strength}. With `entropy` the
+      mnemonic is deterministic; without it, fresh CSPRNG entropy of `strength` bits.
+    action=validate -> {action, valid, word_count} plus a `reason` when invalid — a
+      bad mnemonic is a soft result, not an error (§2.0.5).
+    action=to_seed  -> {action, seed, word_count}: the 64-byte seed as 0x-hex, ready
+      for `bip32_derive`. PBKDF2-HMAC-SHA512(mnemonic, "mnemonic"+passphrase, 2048).
+      An invalid mnemonic raises here; use action=validate to inspect it first.
+
+    Neither the mnemonic, the entropy, nor the passphrase is ever echoed back.
+
+    Example: bip39("to_seed", mnemonic="abandon abandon abandon abandon abandon
+    abandon abandon abandon abandon abandon abandon about") -> seed="0x5eb00bbd..."
+    """
+    if action == "generate":
+        raw = (
+            secrets.token_bytes(strength // 8)
+            if entropy is None
+            else _to_bytes(entropy, "hex")
+        )
+        sentence = _bip39_encode(raw)
+        return {
+            "action": "generate",
+            "mnemonic": sentence,
+            "word_count": len(sentence.split()),
+            "strength": len(raw) * 8,
+        }
+
+    if mnemonic is None:
+        raise ValueError(f"action={action} requires `mnemonic`")
+    words = _bip39_split(mnemonic)
+
+    if action == "validate":
+        reason = _bip39_check(words)
+        result = {
+            "action": "validate",
+            "valid": reason is None,
+            "word_count": len(words),
+        }
+        if reason is not None:
+            result["reason"] = reason
+        return result
+
+    if action == "to_seed":
+        reason = _bip39_check(words)
+        if reason is not None:
+            raise ValueError(f"invalid mnemonic: {reason}")
+        # The seed is defined over the NFKD mnemonic and the NFKD salt; we feed the
+        # canonical lowercase, single-spaced form so forgiven input still derives
+        # the standard seed.
+        salt = unicodedata.normalize("NFKD", "mnemonic" + passphrase)
+        seed = hashlib.pbkdf2_hmac(
+            "sha512", " ".join(words).encode("utf-8"), salt.encode("utf-8"), 2048, 64
+        )
+        return {
+            "action": "to_seed",
+            "seed": "0x" + seed.hex(),
+            "word_count": len(words),
+        }
+
+    raise ValueError(
+        f"unknown action {action!r}; expected 'generate', 'validate', or 'to_seed'"
+    )
+
+
 # --- BIP-32 / BIP-44 HD derivation (§1.15.2) -----------------------------------
 # An HD wallet grows a tree of keys from one seed. The master key is
 # HMAC-SHA512("Bitcoin seed", seed): left half = master private key (a secp256k1
@@ -1573,6 +1782,7 @@ def register(mcp) -> None:
     mcp.tool()(eth_storage_slot)
     mcp.tool()(eth_eoa_address)
     mcp.tool()(eth_contract_address)
+    mcp.tool()(bip39)
     mcp.tool()(eth_tx_codec)
     mcp.tool()(eth_address_case)
     mcp.tool()(ens_namehash)

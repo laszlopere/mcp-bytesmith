@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `bip39` — generate, validate, or convert a BIP-39 mnemonic to a seed
+  (`action=generate|validate|to_seed`). `generate` builds a mnemonic from supplied
+  `entropy` (deterministic) or from fresh CSPRNG entropy of `strength` bits
+  (128→12 words … 256→24 words); `to_seed` runs PBKDF2-HMAC-SHA512 for 2048
+  rounds over the NFKD mnemonic with salt `"mnemonic" + passphrase`, yielding the
+  64-byte seed that `bip32_derive` consumes. Casing and stray whitespace in a
+  mnemonic are forgiven. A mnemonic that fails its checksum is a soft
+  `{"valid": false, "reason": …}` from `validate` but an error from `to_seed`,
+  since a typo there silently derives a different wallet; for the same reason the
+  passphrase is accepted unvalidated (it is the "25th word" — any value is legal
+  and opens a different wallet). Unknown words are reported by position rather
+  than quoted back, and neither mnemonic, entropy, nor passphrase is ever echoed.
+  Checked against all 24 official BIP-39 English test vectors. The canonical
+  2048-word English wordlist is now bundled (see README for attribution).
 - `eth_contract_address` — compute a contract's `create` or `create2` deployment
   address. `create` hashes `rlp([deployer, nonce])`, so the address depends on
   how many times the deployer has deployed; `create2` (EIP-1014) hashes
