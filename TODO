@@ -593,3 +593,58 @@ Checkbox legend:  [ ] not started   [~] in progress   [x] done
                scheme: luhn iban isbn10 isbn13 ean upc gtin vin aba nhs ...
                action=validate -> {scheme, valid:bool, normalized}   (soft)
                action=compute  -> {scheme, check_digit, full_value}
+
+
+[ ] 20.  ETHEREUM DEV TOOLING  —  proposed follow-ups (2026-08-10)
+         All offline + deterministic, keccak-only; no new deps beyond the
+         existing `ethereum` extra. Listed in rough priority order.
+    [ ] 20.1.  eth_calldata(action req, signature req, data opt, values opt)
+               desc: Decode/encode calldata against a human-readable signature
+                     or ABI fragment; splits the selector, names the args.
+               gate: ethereum   (abi_codec §11.6 needs a hand-written type list)
+    [ ] 20.2.  eth_log_decode(signature req, topics req, data opt)
+               desc: Receipt log -> named event args. Handles indexed vs
+                     non-indexed, anonymous events, hash-only dynamic indexed.
+               gate: ethereum
+    [ ] 20.3.  eth_revert_decode(data req, signature opt)
+               desc: Revert data -> reason. Error(string) 0x08c379a0 and
+                     Panic(uint256) 0x4e487b71 + code table; custom errors
+                     when given a signature.
+               gate: ethereum
+    [ ] 20.4.  eth_bytecode(action req, code req)
+               desc: Disassemble runtime bytecode, scrape the dispatcher's
+                     selectors, parse the trailing solc CBOR metadata
+                     (cbor2 already ships for §11.9).
+               gate: ethereum   (pure-python opcode table)
+               action: disassemble | selectors | metadata
+    [ ] 20.5.  + eth_storage_slot (13.5): well-known layouts
+               desc: EIP-1967 impl/admin/beacon, UUPS (EIP-1822), ERC-7201
+                     namespaced, diamond storage. Extend the tool, no new one.
+               gate: ethereum
+    [ ] 20.6.  eth_merkle(action req, leaves opt, proof opt, root opt)
+               desc: OpenZeppelin sorted-pair keccak merkle for airdrop /
+                     allowlist work; the sort convention is easy to get wrong.
+               gate: ethereum
+               action: root | proof | verify
+    [ ] 20.7.  eth_gas(action req, ...)
+               desc: EIP-1559 effective price + total cost, next base fee,
+                     intrinsic calldata gas (zero/non-zero), EIP-4844 blob fee.
+               gate: stdlib   (integer math; companion to eth_unit, 18.1)
+    [ ] 20.8.  abi_inspect(abi req)
+               desc: JSON ABI -> every selector + topic0 with canonical
+                     signatures; human-readable <-> JSON ABI. The lookup
+                     table 20.1-20.2 want.
+               gate: ethereum
+    [ ] 20.9.  eth_userop_hash  (+ EIP-7702 authorization hash)
+               desc: ERC-4337 userOpHash; 7702 tuple 0x05 || rlp([chain_id,
+                     address, nonce]). Structured keccak over existing codecs.
+               gate: ethereum
+    [ ] 20.10. + ens_namehash (10.7): extras
+               desc: DNS wire-format name encoding (wildcard / CCIP-read
+                     resolvers) and the addr.reverse node.
+               gate: ethereum
+
+         NOT PLANNED (considered, rejected): KZG blob commitments (trusted
+         setup + BLS); CREATE2 vanity mining (CPU search, not a computation);
+         a bundled 4-byte selector dictionary (large, goes stale — the
+         networked version is genuinely better).
