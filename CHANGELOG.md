@@ -8,6 +8,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `eth_calldata` — split a transaction's calldata into named, typed arguments
+  (`action=decode`), or build calldata from them (`action=encode`). It takes the
+  human-readable signature you already have — `transfer(address to, uint256
+  amount)` — and does what `abi_codec` cannot: peels off the 4-byte selector and
+  carries the *parameter names* through to the result, as
+  `args: [{name, type, value}]`. A parameter the signature does not name comes
+  back as `"name": null` rather than a synthesized `arg0`; a struct argument also
+  carries `components` naming its members, in JSON ABI shape, while its value
+  stays a nested list. Data locations (`calldata`/`memory`/`storage`), `payable`
+  and `indexed`, type aliases (`uint` → `uint256`), and a trailing Solidity
+  `external returns (...)` clause are all tolerated in the input signature, so a
+  line pasted from source or from Etherscan works; the returned `signature` is
+  the canonical, name-free form, so it remains a valid `eth_selector` input and a
+  valid dictionary key. A leading selector that is *not* the signature's is a
+  soft `selector_matches: false` plus `data_selector` and `reason` — identifying
+  an unknown selector by trying candidate signatures is a legitimate use, so the
+  arguments are still decoded — but a mismatch whose body also fails to decode
+  raises, naming the mismatch as the cause rather than leaking an error from deep
+  inside the ABI decoder. Calldata shorter than the argument head is rejected
+  instead of silently decoding to zeros off the end of the buffer; trailing bytes
+  past the arguments are tolerated. A zero-argument signature needs no `values`.
+  It shares its ABI engine and value conventions with `abi_codec` (ints as
+  decimal strings, addresses EIP-55 checksummed) and adds no dependency — still
+  the `ethereum` extra.
 - `id_generate` — generate one or more identifiers: a UUID (`version` 1, 4, 5 or
   7), a ULID, or a nanoid. Entirely stdlib, so the `ids` extra stays empty —
   `uuid` supplies v1/v4/v5, while v7 (RFC 9562 §5.7), ULID and nanoid are a few

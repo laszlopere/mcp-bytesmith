@@ -283,18 +283,44 @@ def _canon_alias(base: str) -> str:
     return base
 
 
-def _leading_arrays(rest: str) -> str:
-    """Pull leading [..] array suffixes off `rest`, dropping any trailing name."""
+def _peel_arrays(rest: str) -> tuple[str, str]:
+    """Pull leading [..] array suffixes off `rest` -> (suffix, remaining text).
+
+    The remainder is whatever follows the dimensions — the data location and/or
+    the declared parameter name. The canonical type drops those, but the
+    calldata decoder (TODO 20.1) wants the name, so they are returned rather
+    than discarded.
+    """
     rest, suffix = rest.strip(), ""
     while rest.startswith("["):
         close = rest.index("]")
         suffix += rest[: close + 1].replace(" ", "")
         rest = rest[close + 1 :].strip()
-    return suffix
+    return suffix, rest
 
 
-def _canon_param(param: str) -> str:
-    """Canonicalize one parameter: drop name/location, normalize the type."""
+# Keywords that may sit between a parameter's type and its name. `indexed` is an
+# event modifier — captured rather than merely skipped so a later log decoder can
+# split indexed from non-indexed args off this same parse.
+_PARAM_MODIFIERS = frozenset({"calldata", "memory", "storage", "payable", "indexed"})
+
+
+def _param_tail(rest: str) -> tuple[str | None, bool]:
+    """Declared name (None when unnamed) and the `indexed` flag from a param tail."""
+    tokens = rest.split()
+    indexed = "indexed" in tokens
+    name = None
+    if tokens and tokens[-1] not in _PARAM_MODIFIERS and tokens[-1].isidentifier():
+        name = tokens[-1]
+    return name, indexed
+
+
+def _parse_param(param: str) -> dict:
+    """Parse one parameter -> {type, name, indexed} (+ components for tuples).
+
+    `type` is the canonical ABI type, `name` the declared parameter name or None.
+    Tuples also carry `components`, so the dict matches a JSON ABI input entry.
+    """
     param = param.strip()
     if not param:
         raise ValueError("empty parameter in signature")
@@ -305,18 +331,37 @@ def _canon_param(param: str) -> str:
             depth -= ch == ")"
             if depth == 0:
                 break
-        inner = _split_top_level(param[1:i])
-        members = ",".join(_canon_param(p) for p in inner)
-        return f"({members})" + _leading_arrays(param[i + 1 :])
-    token = param.split()[0]  # type sits before any data-location / name
-    bracket = token.find("[")
+        components = [_parse_param(p) for p in _split_top_level(param[1:i])]
+        suffix, rest = _peel_arrays(param[i + 1 :])
+        name, indexed = _param_tail(rest)
+        members = ",".join(c["type"] for c in components)
+        return {
+            "type": f"({members}){suffix}",
+            "name": name,
+            "indexed": indexed,
+            "components": components,
+        }
+    tokens = param.split()  # type sits before any data-location / name
+    bracket = tokens[0].find("[")
     if bracket == -1:
-        return _canon_alias(token)
-    return _canon_alias(token[:bracket]) + token[bracket:]
+        canon = _canon_alias(tokens[0])
+    else:
+        canon = _canon_alias(tokens[0][:bracket]) + tokens[0][bracket:]
+    name, indexed = _param_tail(" ".join(tokens[1:]))
+    return {"type": canon, "name": name, "indexed": indexed}
 
 
-def _canonical_signature(signature: str) -> str:
-    """Reduce a function/event signature to its canonical `name(types)` form."""
+def _canon_param(param: str) -> str:
+    """Canonicalize one parameter: drop name/location, normalize the type."""
+    return _parse_param(param)["type"]
+
+
+def _split_signature(signature: str) -> tuple[str, list[str]]:
+    """Split 'name(a, b)' -> (name, raw unparsed parameter strings).
+
+    Anything after the matching close paren (a Solidity `external returns (bool)`
+    clause) is ignored, so a line pasted straight out of source works.
+    """
     sig = signature.strip()
     open_i = sig.find("(")
     if open_i == -1:
@@ -335,10 +380,19 @@ def _canonical_signature(signature: str) -> str:
     if close_i == -1:
         raise ValueError(f"unbalanced parentheses in signature: {signature!r}")
     body = sig[open_i + 1 : close_i].strip()
-    params = (
-        "" if not body else ",".join(_canon_param(p) for p in _split_top_level(body))
-    )
-    return f"{name}({params})"
+    return name, (_split_top_level(body) if body else [])
+
+
+def _parse_signature(signature: str) -> tuple[str, list[dict]]:
+    """Signature -> (function/event name, parsed params carrying types AND names)."""
+    name, raw = _split_signature(signature)
+    return name, [_parse_param(p) for p in raw]
+
+
+def _canonical_signature(signature: str) -> str:
+    """Reduce a function/event signature to its canonical `name(types)` form."""
+    name, params = _parse_signature(signature)
+    return f"{name}({','.join(p['type'] for p in params)})"
 
 
 def eth_selector(
@@ -775,6 +829,146 @@ def abi_codec(
             "action": "decode",
             "values": _abi_dec_tuple(type_list, _to_bytes(data, "hex"), 0),
         }
+
+    raise ValueError(f"unknown action {action!r}; expected 'encode' or 'decode'")
+
+
+# --- calldata <-> named arguments (TODO 20.1) ----------------------------------
+# Calldata is a 4-byte selector followed by the standard ABI encoding of the
+# argument tuple, so abi_codec already does half the job. What this adds is the
+# selector split and the argument NAMES: the canonical signature discards names
+# (they do not affect the selector), but they are the whole point when reading a
+# transaction, so they are parsed and carried through to the result.
+_NO_VALUE = object()  # sentinel: an args entry with no value (tuple components)
+
+
+def _calldata_arg(param: dict, value: Any = _NO_VALUE) -> dict:
+    """Project a parsed param (+ optional value) into an output `args` entry."""
+    arg: dict[str, Any] = {"name": param["name"], "type": param["type"]}
+    if value is not _NO_VALUE:
+        arg["value"] = value
+    if "components" in param:  # struct: name the members; values stay nested
+        arg["components"] = [_calldata_arg(c) for c in param["components"]]
+    return arg
+
+
+def eth_calldata(
+    action: Annotated[
+        Literal["encode", "decode"],
+        Field(
+            description="'encode' a call's arguments into calldata, or 'decode' "
+            "calldata into named arguments."
+        ),
+    ],
+    signature: Annotated[
+        str,
+        Field(
+            description="A human-readable Solidity function signature, e.g. "
+            "'transfer(address to, uint256 amount)'. Parameter names are optional "
+            "and are reported back; data locations, aliases (uint->uint256) and a "
+            "trailing 'external returns (...)' clause are normalized away."
+        ),
+    ],
+    data: Annotated[
+        str | None,
+        Field(
+            description="0x-prefixed calldata to decode: the 4-byte selector "
+            "followed by the encoded arguments (required for action=decode)."
+        ),
+    ] = None,
+    values: Annotated[
+        list | None,
+        Field(
+            description="Argument values to encode, positionally matching the "
+            "signature's parameters; ints accept int/decimal/0x-hex, bytes are "
+            "0x-hex, tuples and arrays are nested lists. A stringified JSON array "
+            "is accepted. Omit for a zero-argument signature."
+        ),
+    ] = None,
+) -> dict:
+    """Split calldata into named, typed arguments — or build calldata from them.
+
+    `signature` is human-readable, e.g. "transfer(address to, uint256 amount)";
+    parameter names are optional and come back as `args[].name` (null when the
+    signature declares none), with `args[].components` naming a struct's members.
+    action=encode (needs `values`) -> {action, signature (canonical), selector,
+    calldata, args}; `values` may be omitted for a zero-argument signature.
+    action=decode (needs `data`) -> {action, signature, selector,
+    selector_matches, args}; ints are decimal strings and addresses EIP-55
+    checksummed. When the calldata's leading 4 bytes are not this signature's
+    selector the arguments are still decoded, but `selector_matches` is false and
+    `data_selector` + `reason` report the mismatch — the values are then almost
+    certainly meaningless.
+
+    Example: eth_calldata("decode", "transfer(address to, uint256 amount)",
+    "0xa9059cbb...") -> args=[{name="to", ...}, {name="amount", ...}].
+    """
+    name, params = _parse_signature(signature)
+    types = [p["type"] for p in params]
+    canonical = f"{name}({','.join(types)})"
+    selector = _keccak256(canonical.encode("ascii"))[:4]
+
+    if action == "encode":
+        vals = json.loads(values) if isinstance(values, str) else values
+        if vals is None:
+            vals = []  # a zero-argument call needs no `values`
+        if len(vals) != len(types):
+            raise ValueError(
+                f"{canonical} takes {len(types)} argument(s), got {len(vals)}"
+            )
+        body = _abi_enc_tuple(types, vals)
+        return {
+            "action": "encode",
+            "signature": canonical,
+            "selector": "0x" + selector.hex(),
+            "calldata": "0x" + (selector + body).hex(),
+            "args": [_calldata_arg(p, v) for p, v in zip(params, vals)],
+        }
+
+    if action == "decode":
+        if data is None:
+            raise ValueError("action=decode requires `data`")
+        raw = _to_bytes(data, "hex")
+        if len(raw) < 4:
+            raise ValueError(
+                f"calldata is shorter than a 4-byte selector: {len(raw)} bytes"
+            )
+        body, matched = raw[4:], raw[:4] == selector
+        # Minimum head size: one word per dynamic argument (its offset pointer)
+        # plus the inline width of every static one. Short data would otherwise
+        # decode to silent zeros off the end of the buffer. Trailing bytes PAST
+        # the arguments are tolerated (as in abi_codec) — some protocols append
+        # non-ABI suffixes to a call.
+        head = sum(32 if _abi_is_dynamic(t) else _abi_static_size(t) for t in types)
+        if len(body) < head:
+            raise ValueError(
+                f"calldata is too short for {canonical}: {len(body)} bytes after "
+                f"the selector, need at least {head}"
+            )
+        try:
+            decoded = _abi_dec_tuple(types, body, 0)
+        except ValueError as exc:
+            if matched:
+                raise
+            raise ValueError(
+                f"calldata selector 0x{raw[:4].hex()} is not {canonical}'s "
+                f"(0x{selector.hex()}), and the remaining data does not decode "
+                f"as its arguments"
+            ) from exc
+        result = {
+            "action": "decode",
+            "signature": canonical,
+            "selector": "0x" + selector.hex(),
+            "selector_matches": matched,
+            "args": [_calldata_arg(p, v) for p, v in zip(params, decoded)],
+        }
+        if not matched:
+            result["data_selector"] = "0x" + raw[:4].hex()
+            result["reason"] = (
+                f"calldata starts with 0x{raw[:4].hex()}, not {canonical}'s "
+                f"selector 0x{selector.hex()}; the decoded arguments are unreliable"
+            )
+        return result
 
     raise ValueError(f"unknown action {action!r}; expected 'encode' or 'decode'")
 
@@ -1779,6 +1973,7 @@ def register(mcp) -> None:
     mcp.tool()(eth_selector)
     mcp.tool()(rlp_codec)
     mcp.tool()(abi_codec)
+    mcp.tool()(eth_calldata)
     mcp.tool()(eth_storage_slot)
     mcp.tool()(eth_eoa_address)
     mcp.tool()(eth_contract_address)

@@ -598,10 +598,26 @@ Checkbox legend:  [ ] not started   [~] in progress   [x] done
 [ ] 20.  ETHEREUM DEV TOOLING  —  proposed follow-ups (2026-08-10)
          All offline + deterministic, keccak-only; no new deps beyond the
          existing `ethereum` extra. Listed in rough priority order.
-    [ ] 20.1.  eth_calldata(action req, signature req, data opt, values opt)
-               desc: Decode/encode calldata against a human-readable signature
-                     or ABI fragment; splits the selector, names the args.
+    [x] 20.1.  eth_calldata(action req, signature req, data opt, values opt)
+               desc: Decode/encode calldata against a human-readable signature;
+                     splits the selector, names the args.
                gate: ethereum   (abi_codec §11.6 needs a hand-written type list)
+               signature: human-readable, names optional ("transfer(address to,
+                     uint256 amount)"); data locations, payable/indexed, aliases
+                     and a trailing `returns (...)` are tolerated. A JSON ABI
+                     fragment is 20.8's job, not this tool's.
+               action=encode -> {action, signature, selector, calldata, args}
+                     (`values` may be omitted for a zero-argument signature)
+               action=decode -> {action, signature, selector, selector_matches,
+                     args}; a wrong leading selector is SOFT — it adds
+                     {data_selector, reason} and still decodes, since trying
+                     candidate signatures is a legitimate use. A mismatch whose
+                     body also fails to decode raises.
+               args: [{name (null when undeclared), type, value}], plus
+                     `components` on tuple args (JSON ABI shape)
+               note: shares the ABI engine with abi_codec; the name-aware parser
+                     (_parse_signature/_parse_param, which also captures
+                     `indexed`) is the reusable half for 20.2/20.3/20.8.
     [ ] 20.2.  eth_log_decode(signature req, topics req, data opt)
                desc: Receipt log -> named event args. Handles indexed vs
                      non-indexed, anonymous events, hash-only dynamic indexed.
@@ -635,6 +651,9 @@ Checkbox legend:  [ ] not started   [~] in progress   [x] done
                      signatures; human-readable <-> JSON ABI. The lookup
                      table 20.1-20.2 want.
                gate: ethereum
+               note: supplies the inverse of 20.1's _parse_param (JSON ABI ->
+                     params); eth_calldata then accepts a dict `signature`
+                     via a one-line branch.
     [ ] 20.9.  eth_userop_hash  (+ EIP-7702 authorization hash)
                desc: ERC-4337 userOpHash; 7702 tuple 0x05 || rlp([chain_id,
                      address, nonce]). Structured keccak over existing codecs.
