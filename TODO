@@ -618,10 +618,35 @@ Checkbox legend:  [ ] not started   [~] in progress   [x] done
                note: shares the ABI engine with abi_codec; the name-aware parser
                      (_parse_signature/_parse_param, which also captures
                      `indexed`) is the reusable half for 20.2/20.3/20.8.
-    [ ] 20.2.  eth_log_decode(signature req, topics req, data opt)
+    [x] 20.2.  eth_log_decode(signature req, topics req, data opt,
+               anonymous opt)
                desc: Receipt log -> named event args. Handles indexed vs
                      non-indexed, anonymous events, hash-only dynamic indexed.
                gate: ethereum
+               signature: human-readable; `indexed` is what splits topics from
+                     data. Names optional, aliases/`returns (...)` tolerated.
+               ret: {signature, anonymous, topic0, topic0_matches, args};
+                     topic0/topic0_matches are DROPPED when anonymous — such a
+                     log carries no topic0 to check.
+               args: every param in DECLARATION order, indexed and not,
+                     interleaved: [{name (null when undeclared), type, value,
+                     indexed}] plus `components` on tuple args.
+               hashed: only value types (uintN/intN/bool/address/bytesN) sit in
+                     a topic verbatim. EVERY array (uint256[3] included), EVERY
+                     struct ((uint256,bool) included) and bytes/string are
+                     keccak-hashed -> {value: null, hashed: true, hash}. This is
+                     NOT _abi_is_dynamic's test, hence _abi_indexed_is_hashed.
+               topic0 mismatch is SOFT ({log_topic0, reason}, still decodes, as
+                     in 20.1); a topic COUNT that contradicts the signature
+                     RAISES — ERC-20 and ERC-721 Transfer share a topic0 and
+                     differ only in arity, so the count is the real check.
+               anonymous: an explicit flag, never inferred from the topic count —
+                     inference would shift indexed args by a word on a truncated
+                     topics list and make topic0_matches=false unreachable.
+                     A count one short of expected hints at the flag.
+               reused from 20.1: _parse_signature's `indexed` flag, _calldata_arg
+                     (via the _log_arg sibling), the head-size guard and the
+                     soft-mismatch pattern.
     [ ] 20.3.  eth_revert_decode(data req, signature opt)
                desc: Revert data -> reason. Error(string) 0x08c379a0 and
                      Panic(uint256) 0x4e487b71 + code table; custom errors

@@ -8,6 +8,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `eth_log_decode` — turn a receipt log's `topics` and `data` into named event
+  arguments, given the human-readable event signature. The `indexed` modifier is
+  what splits the two halves, and the arguments come back **interleaved in
+  declaration order** with an `indexed` flag on each, rather than sorted into two
+  buckets — a log is read against its source, and the source declares them in one
+  order. The subtlety it exists to handle is what a topic actually holds: only a
+  value type (`uintN`/`intN`/`bool`/`address`/`bytesN`) sits there verbatim, while
+  every array — **including a static `uint256[3]`** — every struct — **including a
+  fully static `(uint256,bool)`** — and `bytes`/`string` are keccak-hashed into
+  their topic. Those return `"value": null` alongside `hashed: true` and `hash`
+  (the topic word), which is still enough to match against `keccak` of a candidate
+  preimage, but is honestly not the value. An event declared `anonymous` in
+  Solidity carries no topic0 and may index up to four arguments; it is signalled
+  by an explicit `anonymous` flag rather than inferred from the topic count,
+  because inference would silently shift every indexed argument by one word when a
+  topic list is truncated, and would make a topic0 mismatch unreportable. A
+  `topics[0]` that is not the signature's topic0 is soft — `topic0_matches: false`
+  plus `log_topic0` and `reason`, arguments still decoded, since probing candidate
+  signatures is legitimate — but a topic *count* that contradicts the signature
+  raises, because ERC-20 and ERC-721 `Transfer` hash to the identical topic0 and
+  differ only in how many arguments are indexed, so the count is the real identity
+  check. Data shorter than the non-indexed head is rejected rather than decoded as
+  zeros off the end of the buffer; trailing bytes are tolerated. It shares the ABI
+  engine and value conventions with `abi_codec` and `eth_calldata` and adds no
+  dependency — still the `ethereum` extra.
 - `eth_calldata` — split a transaction's calldata into named, typed arguments
   (`action=decode`), or build calldata from them (`action=encode`). It takes the
   human-readable signature you already have — `transfer(address to, uint256

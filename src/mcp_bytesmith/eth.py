@@ -973,6 +973,204 @@ def eth_calldata(
     raise ValueError(f"unknown action {action!r}; expected 'encode' or 'decode'")
 
 
+# --- receipt log -> named event args (TODO 20.2) -------------------------------
+# A log is `topics` (at most 4 words) plus `data`. For a non-anonymous event
+# topics[0] is keccak(canonical signature) and topics[1:] hold the indexed
+# arguments; an anonymous event has no topic0 and starts them at topics[0]. The
+# subtlety is what a topic actually HOLDS: only a value type (uintN/intN/bool/
+# address/bytesN) sits there verbatim. Every array, every struct, and
+# bytes/string are keccak-hashed into their topic, so the value is gone and only
+# equality matching survives. That is NOT _abi_is_dynamic's test — uint256[3]
+# and (uint256,bool) are static yet hashed — hence the predicate below.
+def _abi_indexed_is_hashed(t: str) -> bool:
+    """True when an indexed argument of type `t` reaches its topic as a keccak hash."""
+    return (
+        _array_split(t) is not None
+        or _is_tuple(t)
+        or _canon_alias(t.strip()) in ("bytes", "string")
+    )
+
+
+def _log_arg(param: dict, value: Any = _NO_VALUE, topic: bytes | None = None) -> dict:
+    """Project a parsed event param into an output `args` entry (log flavour).
+
+    Adds `indexed` to the shared calldata projection, plus — for an indexed
+    argument whose type is hashed into its topic — the `hashed`/`hash` pair
+    reporting the topic word that stands in for the unrecoverable value.
+    """
+    arg = _calldata_arg(param, value)
+    arg["indexed"] = param["indexed"]
+    if topic is not None:
+        arg["hashed"] = True
+        arg["hash"] = "0x" + topic.hex()
+    return arg
+
+
+def eth_log_decode(
+    signature: Annotated[
+        str,
+        Field(
+            description="A human-readable Solidity event signature, e.g. "
+            "'Transfer(address indexed from, address indexed to, uint256 value)'. "
+            "The `indexed` modifier is what splits the arguments between `topics` "
+            "and `data`; parameter names are optional and are reported back, and "
+            "aliases (uint->uint256) are normalized away."
+        ),
+    ],
+    topics: Annotated[
+        list[str],
+        Field(
+            description="The log's topics as 32-byte hex words (0x prefix "
+            "optional): topic0 (the event's keccak signature hash) first, then one "
+            "word per indexed argument. An anonymous event has no topic0. A "
+            "stringified JSON array is accepted."
+        ),
+    ],
+    data: Annotated[
+        str | None,
+        Field(
+            description="0x-prefixed log data: the standard ABI encoding of the "
+            "NON-indexed arguments. Omit (or pass '0x') when every argument is "
+            "indexed."
+        ),
+    ] = None,
+    anonymous: Annotated[
+        bool,
+        Field(
+            description="True when the event is declared `anonymous` in Solidity — "
+            "its log carries no topic0, so indexed arguments start at topics[0] "
+            "and up to 4 are allowed."
+        ),
+    ] = False,
+) -> dict:
+    """Turn a receipt log's topics and data into named event arguments.
+
+    `signature` is human-readable, e.g. "Transfer(address indexed from, address
+    indexed to, uint256 value)"; `indexed` is what splits the arguments between
+    `topics` and `data`. Returns {signature (canonical), anonymous, topic0,
+    topic0_matches, args}; `topic0` and `topic0_matches` are omitted for an
+    anonymous event, which carries no topic0 to check. `args` lists EVERY
+    argument in declaration order — indexed and not, interleaved — as
+    {name (null when undeclared), type, value, indexed}, plus `components` on
+    tuple args. Only a value type (uintN/intN/bool/address/bytesN) survives in a
+    topic: every array, every struct, and bytes/string are keccak-hashed into it,
+    so those come back with value null plus {hashed: true, hash} — enough to
+    match against keccak of a candidate, never the value itself. A topics[0] that
+    is not this signature's topic0 is soft (topic0_matches false, plus
+    `log_topic0` and `reason`), but a topic COUNT that contradicts the signature
+    raises: ERC-20 and ERC-721 Transfer share a topic0 and differ only there.
+
+    Example: eth_log_decode("Transfer(address indexed from, address indexed to,
+    uint256 value)", [topic0, from_word, to_word], "0x..0de0b6b3a7640000") ->
+    args=[{name="from", ...}, {name="to", ...}, {name="value", ...}].
+    """
+    name, params = _parse_signature(signature)
+    types = [p["type"] for p in params]
+    canonical = f"{name}({','.join(types)})"
+    topic0 = _keccak256(canonical.encode("ascii"))
+
+    topic_list = topics
+    if isinstance(topic_list, str) and topic_list.lstrip().startswith("["):
+        topic_list = json.loads(topic_list)  # client stringified the array
+    if not isinstance(topic_list, list):
+        raise ValueError("`topics` must be a list of 32-byte hex words")
+    words = []
+    for i, t in enumerate(topic_list):
+        if not isinstance(t, str):
+            raise ValueError(
+                f"topics[{i}] must be a hex string, got {type(t).__name__}"
+            )
+        word = _to_bytes(t, "hex")
+        if len(word) != 32:
+            raise ValueError(f"topics[{i}] must be 32 bytes, got {len(word)}")
+        words.append(word)
+
+    indexed_params = [p for p in params if p["indexed"]]
+    plain_params = [p for p in params if not p["indexed"]]
+
+    # No LOGn opcode can emit more than 4 topics, so a signature needing more
+    # indexed arguments than that could never have produced any log at all.
+    limit = 4 if anonymous else 3
+    if len(indexed_params) > limit:
+        raise ValueError(
+            f"{canonical} has {len(indexed_params)} indexed arguments; a"
+            f"{' anonymous' if anonymous else ''} event allows at most {limit}"
+        )
+
+    # Arity is checked BEFORE topic0: a wrong count means the indexed arguments
+    # cannot be paired with topic words at all, so any output would be invented.
+    # It also catches what topic0 cannot — ERC-20 and ERC-721 Transfer hash to
+    # the same topic0 and differ only in how many arguments are indexed.
+    expected = len(indexed_params) if anonymous else len(indexed_params) + 1
+    if len(words) != expected:
+        # Exactly one topic short of a non-anonymous event is the shape a
+        # forgotten `anonymous` produces — the only place that flag surfaces.
+        hint = (
+            "; an anonymous event carries no topic0 — pass anonymous=true if it "
+            "is declared anonymous"
+            if not anonymous and len(words) == expected - 1
+            else ""
+        )
+        raise ValueError(
+            f"{canonical} implies {expected} topic(s) ({len(indexed_params)} "
+            f"indexed{'' if anonymous else ' plus topic0'}), got {len(words)}{hint}"
+        )
+
+    result: dict[str, Any] = {"signature": canonical, "anonymous": anonymous}
+    if anonymous:
+        indexed_words, matched = words, None
+    else:
+        matched = words[0] == topic0
+        indexed_words = words[1:]
+        result["topic0"] = "0x" + topic0.hex()
+        result["topic0_matches"] = matched
+
+    plain_types = [p["type"] for p in plain_params]
+    body = _to_bytes(data, "hex") if data is not None else b""
+    # Same guard as eth_calldata: one word per dynamic argument plus the inline
+    # width of every static one. Trailing bytes past the arguments are tolerated.
+    head = sum(32 if _abi_is_dynamic(t) else _abi_static_size(t) for t in plain_types)
+    if len(body) < head:
+        raise ValueError(
+            f"log data is too short for {canonical}: {len(body)} bytes, "
+            f"need at least {head} for its {len(plain_types)} non-indexed argument(s)"
+        )
+    try:
+        decoded = _abi_dec_tuple(plain_types, body, 0)
+    except ValueError as exc:
+        if matched is not False:  # anonymous, or the identity checked out
+            raise
+        raise ValueError(
+            f"topics[0] 0x{words[0].hex()} is not {canonical}'s topic0 "
+            f"(0x{topic0.hex()}), and the data does not decode as its "
+            f"non-indexed arguments"
+        ) from exc
+
+    args, ti, pi = [], 0, 0
+    for p in params:
+        if p["indexed"]:
+            word = indexed_words[ti]
+            ti += 1
+            if _abi_indexed_is_hashed(p["type"]):
+                args.append(_log_arg(p, value=None, topic=word))
+            else:
+                args.append(
+                    _log_arg(p, value=_abi_dec_scalar(_canon_alias(p["type"]), word, 0))
+                )
+        else:
+            args.append(_log_arg(p, value=decoded[pi]))
+            pi += 1
+    result["args"] = args
+
+    if matched is False:
+        result["log_topic0"] = "0x" + words[0].hex()
+        result["reason"] = (
+            f"topics[0] 0x{words[0].hex()} is not {canonical}'s topic0 "
+            f"(0x{topic0.hex()}); the decoded arguments are unreliable"
+        )
+    return result
+
+
 # --- storage-slot layout (§1.15.4) ---------------------------------------------
 def _storage_encode_key(value: Any, key_type: str) -> bytes:
     """Encode a mapping key for slot derivation.
@@ -1974,6 +2172,7 @@ def register(mcp) -> None:
     mcp.tool()(rlp_codec)
     mcp.tool()(abi_codec)
     mcp.tool()(eth_calldata)
+    mcp.tool()(eth_log_decode)
     mcp.tool()(eth_storage_slot)
     mcp.tool()(eth_eoa_address)
     mcp.tool()(eth_contract_address)
