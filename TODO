@@ -647,11 +647,30 @@ Checkbox legend:  [ ] not started   [~] in progress   [x] done
                reused from 20.1: _parse_signature's `indexed` flag, _calldata_arg
                      (via the _log_arg sibling), the head-size guard and the
                      soft-mismatch pattern.
-    [ ] 20.3.  eth_revert_decode(data req, signature opt)
+    [x] 20.3.  eth_revert_decode(data req, signature opt)
                desc: Revert data -> reason. Error(string) 0x08c379a0 and
                      Panic(uint256) 0x4e487b71 + code table; custom errors
                      when given a signature.
                gate: ethereum
+               ret: {kind, ...} — kind discriminates the payload:
+                     empty   -> {reason}            (bare revert()/no data)
+                     error   -> {selector, signature, reason}   Error(string)
+                     panic   -> {selector, signature, code, meaning}
+                                (undocumented code -> meaning null + reason)
+                     custom  -> {selector, signature, selector_matches, args}
+                                (args as in 20.1, needs `signature`)
+                     unknown -> {selector, reason}  (no signature given)
+               precedence: a recognized built-in BEATS a non-matching signature
+                     ("this is a standard Error(string)" beats forcing the
+                     guess); a matching signature wins over everything; a guess
+                     that cannot decode the tail degrades to `unknown` rather
+                     than raising. A mismatched-but-decodable signature is soft
+                     ({data_selector, reason}), as in 20.1.
+               note: both built-in selectors are derived by keccak from their
+                     signatures, not hardcoded — the tests assert the well-known
+                     hex, so the two can never drift.
+               reused from 20.1: _parse_signature, _calldata_arg, the head-size
+                     guard and the soft-mismatch pattern.
     [ ] 20.4.  eth_bytecode(action req, code req)
                desc: Disassemble runtime bytecode, scrape the dispatcher's
                      selectors, parse the trailing solc CBOR metadata

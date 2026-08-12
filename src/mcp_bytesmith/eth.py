@@ -1171,6 +1171,157 @@ def eth_log_decode(
     return result
 
 
+# --- revert data -> reason (TODO 20.3) -----------------------------------------
+# A failed call returns its revert data in the same shape as calldata: a 4-byte
+# selector plus ABI-encoded arguments. Two are built into Solidity — Error(string)
+# from `require`/`revert("...")` and Panic(uint256) from the compiler's own checks
+# — and everything else is a user-declared custom error, undecodable without its
+# signature. An empty payload is its own answer: `revert()` with no reason, or a
+# require that never carried one.
+_ERROR_SIG = "Error(string)"
+_PANIC_SIG = "Panic(uint256)"
+_ERROR_SELECTOR = _keccak256(_ERROR_SIG.encode("ascii"))[:4]  # 0x08c379a0
+_PANIC_SELECTOR = _keccak256(_PANIC_SIG.encode("ascii"))[:4]  # 0x4e487b71
+
+# Solidity's documented panic codes (docs.soliditylang.org, "Panic via assert").
+_PANIC_CODES = {
+    0x00: "generic compiler-inserted panic",
+    0x01: "assert() with an argument that evaluated to false",
+    0x11: "arithmetic overflow or underflow outside an unchecked block",
+    0x12: "division or modulo by zero",
+    0x21: "a value too large or negative was converted to an enum type",
+    0x22: "an incorrectly encoded storage byte array was accessed",
+    0x31: ".pop() was called on an empty array",
+    0x32: "an array was accessed at an out-of-bounds or negative index",
+    0x41: "too much memory was allocated, or an array was created too large",
+    0x51: "a zero-initialized variable of internal function type was called",
+}
+
+
+def eth_revert_decode(
+    data: Annotated[
+        str,
+        Field(
+            description="The 0x-prefixed revert data returned by a failed call: a "
+            "4-byte error selector followed by its ABI-encoded arguments. An empty "
+            "'0x' is a revert that carried no reason."
+        ),
+    ],
+    signature: Annotated[
+        str | None,
+        Field(
+            description="A custom error's human-readable signature, e.g. "
+            "'InsufficientBalance(uint256 available, uint256 required)'. Only "
+            "needed for user-declared errors — Error(string) and Panic(uint256) "
+            "are recognized without it."
+        ),
+    ] = None,
+) -> dict:
+    """Decode a failed call's revert data into a human-readable reason.
+
+    Returns {kind, ...} where `kind` selects the rest of the payload:
+    'empty' (no revert data at all) -> {reason}; 'error' (Error(string), the
+    require/revert message) -> {selector, signature, reason}; 'panic'
+    (Panic(uint256), a compiler check) -> {selector, signature, code, meaning};
+    'custom' (a user-declared error, needs `signature`) -> {selector, signature,
+    selector_matches, args} with args as {name, type, value} exactly as
+    eth_calldata reports them; 'unknown' (an unrecognized selector and no
+    `signature` given) -> {selector, reason}. A `signature` whose selector is not
+    the one in `data` still decodes, but selector_matches is false and `reason`
+    says so.
+
+    Example: eth_revert_decode("0x08c379a0...") -> kind="error",
+    reason="ERC20: transfer amount exceeds balance".
+    """
+    raw = _to_bytes(data, "hex")
+    if not raw:
+        return {
+            "kind": "empty",
+            "reason": "reverted without any data — revert()/require() with no "
+            "reason string, or a failure that returned none (e.g. out of gas)",
+        }
+    if len(raw) < 4:
+        raise ValueError(
+            f"revert data is shorter than a 4-byte selector: {len(raw)} bytes"
+        )
+    selector, body = raw[:4], raw[4:]
+
+    def _decode(types: list[str], label: str) -> list:
+        """ABI-decode the argument tail, refusing to read past its end."""
+        head = sum(32 if _abi_is_dynamic(t) else _abi_static_size(t) for t in types)
+        if len(body) < head:
+            raise ValueError(
+                f"revert data is too short for {label}: {len(body)} bytes after "
+                f"the selector, need at least {head}"
+            )
+        return _abi_dec_tuple(types, body, 0)
+
+    if signature is not None:
+        name, params = _parse_signature(signature)
+        types = [p["type"] for p in params]
+        canonical = f"{name}({','.join(types)})"
+        custom_selector = _keccak256(canonical.encode("ascii"))[:4]
+        matched = selector == custom_selector
+        # A built-in takes precedence over a signature that does not match the
+        # data — "you guessed X, but this is a standard Error(string)" is the
+        # more useful answer than forcing the guess onto it.
+        if matched or selector not in (_ERROR_SELECTOR, _PANIC_SELECTOR):
+            try:
+                values = _decode(types, canonical)
+            except ValueError:
+                if matched:
+                    raise
+                values = None
+            if values is not None:
+                result = {
+                    "kind": "custom",
+                    "selector": "0x" + custom_selector.hex(),
+                    "signature": canonical,
+                    "selector_matches": matched,
+                    "args": [_calldata_arg(p, v) for p, v in zip(params, values)],
+                }
+                if not matched:
+                    result["data_selector"] = "0x" + selector.hex()
+                    result["reason"] = (
+                        f"revert data starts with 0x{selector.hex()}, not "
+                        f"{canonical}'s selector 0x{custom_selector.hex()}; the "
+                        f"decoded arguments are unreliable"
+                    )
+                return result
+
+    if selector == _ERROR_SELECTOR:
+        return {
+            "kind": "error",
+            "selector": "0x" + selector.hex(),
+            "signature": _ERROR_SIG,
+            "reason": _decode(["string"], _ERROR_SIG)[0],
+        }
+
+    if selector == _PANIC_SELECTOR:
+        code = int(_decode(["uint256"], _PANIC_SIG)[0])
+        result = {
+            "kind": "panic",
+            "selector": "0x" + selector.hex(),
+            "signature": _PANIC_SIG,
+            "code": hex(code),
+            "meaning": _PANIC_CODES.get(code),
+        }
+        if result["meaning"] is None:
+            result["reason"] = (
+                f"{hex(code)} is not one of Solidity's documented panic codes"
+            )
+        return result
+
+    return {
+        "kind": "unknown",
+        "selector": "0x" + selector.hex(),
+        "reason": (
+            f"0x{selector.hex()} is neither Error(string) nor Panic(uint256); it "
+            f"is a custom error — pass its `signature` to decode the arguments"
+        ),
+    }
+
+
 # --- storage-slot layout (§1.15.4) ---------------------------------------------
 def _storage_encode_key(value: Any, key_type: str) -> bytes:
     """Encode a mapping key for slot derivation.
@@ -2173,6 +2324,7 @@ def register(mcp) -> None:
     mcp.tool()(abi_codec)
     mcp.tool()(eth_calldata)
     mcp.tool()(eth_log_decode)
+    mcp.tool()(eth_revert_decode)
     mcp.tool()(eth_storage_slot)
     mcp.tool()(eth_eoa_address)
     mcp.tool()(eth_contract_address)

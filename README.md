@@ -45,7 +45,9 @@ EIP-191, and EIP-712 typed-data hashing, `abi_codec` and `rlp_codec` for ABI and
 RLP encode/decode, `eth_selector` for function and event selectors,
 `eth_calldata` for splitting a call's calldata into named, typed arguments (and
 building it back), `eth_log_decode` for turning a receipt log's topics and data
-into named event arguments, `eth_tx_codec` for transactions, `eth_storage_slot`
+into named event arguments, `eth_revert_decode` for turning a failed call's
+revert data into a reason (`Error(string)`, `Panic(uint256)`, or a custom error),
+`eth_tx_codec` for transactions, `eth_storage_slot`
 for storage layout, `eth_address_case` for EIP-55 checksums, `ens_namehash` for
 EIP-137 ENS namehash/labelhash, `bip39` for BIP-39 mnemonic generation,
 validation, and seed derivation, `bip32_derive` for BIP-32/44 HD key and address

@@ -8,6 +8,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `eth_revert_decode` — turn a failed call's revert data into a human-readable
+  reason. Revert data has calldata's shape — a 4-byte selector plus ABI-encoded
+  arguments — and the result is discriminated by `kind`: `error` for
+  `Error(string)` (`0x08c379a0`, what `require`/`revert("…")` produce) carrying
+  the message as `reason`; `panic` for `Panic(uint256)` (`0x4e487b71`, the
+  compiler's own checks) carrying the `code` and a `meaning` drawn from
+  Solidity's documented table — `0x11` overflow, `0x12` division by zero, `0x32`
+  array index out of bounds, `0x51` a zero-initialized internal function call,
+  and the rest — with an undocumented code reported as `meaning: null` rather
+  than an invented gloss; `custom` for a user-declared error, which needs its
+  `signature` and comes back with named `args` exactly as `eth_calldata` reports
+  them; `unknown` for an unrecognized selector with no signature given, which
+  says so and names the selector instead of guessing; and `empty` for revert data
+  that is genuinely empty — a bare `revert()`, or a failure that returned nothing
+  at all. Both built-in selectors are derived by keccak from their signatures
+  rather than hardcoded, so the module cannot drift from the constants. A
+  `signature` that does not match the data is soft (`selector_matches: false`
+  plus `data_selector` and `reason`, arguments still decoded), except that a
+  recognized built-in wins over a non-matching guess — "this is a standard
+  `Error(string)`" is more useful than forcing your candidate onto it — and a
+  guess that cannot decode the tail at all degrades to `unknown` rather than
+  raising. Adds no dependency; still the `ethereum` extra.
 - `eth_log_decode` — turn a receipt log's `topics` and `data` into named event
   arguments, given the human-readable event signature. The `indexed` modifier is
   what splits the two halves, and the arguments come back **interleaved in
