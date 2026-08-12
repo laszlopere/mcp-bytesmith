@@ -765,7 +765,7 @@ requires-dist = [
     { name = "idna", marker = "extra == 'dev'", specifier = ">=3.0" },
     { name = "idna", marker = "extra == 'encoding'", specifier = ">=3.0" },
     { name = "json-repair", specifier = ">=0.30" },
-    { name = "mcp", specifier = ">=1.2" },
+    { name = "mcp", specifier = ">=1.2,<2" },
     { name = "mcp", extras = ["cli"], marker = "extra == 'dev'" },
     { name = "msgpack", marker = "extra == 'dev'", specifier = ">=1.0" },
     { name = "msgpack", marker = "extra == 'serialize'", specifier = ">=1.0" },
