@@ -10,7 +10,12 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = "GPL-3.0-or-later"
 authors = [{ name = "Laszlo Pere", email = "226979892+laszlopere@users.noreply.github.com" }]
-dependencies = ["mcp>=1.2", "json-repair>=0.30"]
+# mcp 2.0 dropped mcp.server.fastmcp (rewritten as mcp.server.mcpserver), which
+# every tool here registers through — so the SDK is capped below 2 until that
+# migration happens. uv.lock pinned 1.x, which hid this from `uv run`/CI while a
+# fresh install (uv tool install, pip, the Glama image) resolved 2.0 and could
+# not start.
+dependencies = ["mcp>=1.2,<2", "json-repair>=0.30"]
 
 [project.optional-dependencies]
 dev = [
