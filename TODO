@@ -690,14 +690,35 @@ Checkbox legend:  [ ] not started   [~] in progress   [x] done
                desc: EIP-1559 effective price + total cost, next base fee,
                      intrinsic calldata gas (zero/non-zero), EIP-4844 blob fee.
                gate: stdlib   (integer math; companion to eth_unit, 18.1)
-    [ ] 20.8.  abi_inspect(abi req)
+    [x] 20.8.  abi_inspect(abi req)
                desc: JSON ABI -> every selector + topic0 with canonical
                      signatures; human-readable <-> JSON ABI. The lookup
                      table 20.1-20.2 want.
                gate: ethereum
-               note: supplies the inverse of 20.1's _parse_param (JSON ABI ->
-                     params); eth_calldata then accepts a dict `signature`
-                     via a one-line branch.
+               abi: EITHER representation, and the answer carries both — a JSON
+                     ABI (array or single object; tuples as {"type":"tuple",
+                     components}) or human-readable declarations (one string or
+                     an array). A bare signature with no kind keyword is a
+                     function. Stringified JSON accepted.
+               ret: {count, entries, selectors, topics} (+ collisions).
+                     entries: {type, name, signature, human, inputs, outputs}
+                     + selector (function/error) | topic0 + anonymous (event)
+                     + stateMutability when known. inputs/outputs are JSON ABI
+                     shape, so human -> JSON is `inputs` and JSON -> human is
+                     `human`; the round trip is a fixed point.
+               selectors/topics: the lookup maps 20.1-20.3 take as input —
+                     artifact to decodable signature in one call.
+               collisions: two DIFFERENT signatures sharing a selector are
+                     reported instead of one silently overwriting the other
+                     in the map (proxy/implementation clash). Overloads and a
+                     repeated signature are not collisions.
+               constructor/fallback/receive carry no signature or selector;
+                     an anonymous event is kept out of `topics` (never emits
+                     topic0) though its entry still shows the hash.
+               note: _params_from_abi/_abi_json_params are the inverse pair of
+                     20.1's _parse_param. NOT done: widening eth_calldata /
+                     eth_log_decode / eth_revert_decode to accept a dict
+                     `signature` — a separate, visible API change.
     [ ] 20.9.  eth_userop_hash  (+ EIP-7702 authorization hash)
                desc: ERC-4337 userOpHash; 7702 tuple 0x05 || rlp([chain_id,
                      address, nonce]). Structured keccak over existing codecs.

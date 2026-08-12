@@ -1322,6 +1322,258 @@ def eth_revert_decode(
     }
 
 
+# --- JSON ABI <-> human-readable, and the selector table (TODO 20.8) -----------
+# The sibling tools (eth_calldata, eth_log_decode, eth_revert_decode) all speak
+# human-readable signatures, because that is what a person pastes. A compiled
+# artifact speaks JSON ABI instead, where a tuple is spelled {"type": "tuple",
+# "components": [...]}. This translates in both directions off ONE parsed form —
+# the same {type, name, indexed, components} dicts _parse_param produces — and
+# derives every selector and topic0 along the way, which is the lookup table you
+# need before you can call any of the others.
+_ABI_KINDS = ("function", "event", "error", "constructor", "fallback", "receive")
+_ABI_MUTABILITY = ("pure", "view", "payable", "nonpayable")
+
+
+def _abi_json_type(entry: dict) -> str:
+    """Canonical ABI type for one JSON ABI input/output entry (tuples expanded)."""
+    t = entry.get("type")
+    if not isinstance(t, str) or not t:
+        raise ValueError(f"ABI parameter is missing a `type`: {entry!r}")
+    if t.startswith("tuple"):
+        inner = ",".join(_abi_json_type(c) for c in entry.get("components") or [])
+        return f"({inner}){t[len('tuple') :]}"
+    return _canon_alias(t)
+
+
+def _params_from_abi(entries: Any) -> list[dict]:
+    """JSON ABI inputs -> the parsed-param dicts _parse_param produces."""
+    params = []
+    for entry in entries or []:
+        if not isinstance(entry, dict):
+            raise ValueError(f"ABI parameter must be an object, got {entry!r}")
+        param = {
+            "type": _abi_json_type(entry),
+            "name": entry.get("name") or None,
+            "indexed": bool(entry.get("indexed", False)),
+        }
+        if str(entry.get("type", "")).startswith("tuple"):
+            param["components"] = _params_from_abi(entry.get("components"))
+        params.append(param)
+    return params
+
+
+def _tuple_head_end(t: str) -> int:
+    """Index of the ')' closing a tuple type's leading '(...)' group."""
+    depth = 0
+    for i, ch in enumerate(t):
+        depth += ch == "("
+        depth -= ch == ")"
+        if depth == 0:
+            return i
+    raise ValueError(f"unbalanced parentheses in type: {t!r}")
+
+
+def _abi_json_params(params: list[dict]) -> list[dict]:
+    """Parsed params -> JSON ABI entries (the inverse of _params_from_abi)."""
+    entries = []
+    for p in params:
+        if "components" in p:
+            close = _tuple_head_end(p["type"])
+            entry: dict[str, Any] = {
+                "name": p["name"] or "",
+                "type": "tuple" + p["type"][close + 1 :],
+                "components": _abi_json_params(p["components"]),
+            }
+        else:
+            entry = {"name": p["name"] or "", "type": p["type"]}
+        if p.get("indexed"):
+            entry["indexed"] = True
+        entries.append(entry)
+    return entries
+
+
+def _human_param(p: dict) -> str:
+    """Render one parsed param back to Solidity source form, names included."""
+    t = p["type"]
+    if "components" in p:
+        close = _tuple_head_end(t)
+        members = ", ".join(_human_param(c) for c in p["components"])
+        t = f"({members}){t[close + 1 :]}"
+    bits = [t]
+    if p.get("indexed"):
+        bits.append("indexed")
+    if p["name"]:
+        bits.append(p["name"])
+    return " ".join(bits)
+
+
+def _abi_entry_from_human(text: str) -> dict:
+    """Parse one human-readable declaration into a normalized ABI record."""
+    text = text.strip()
+    kind, rest = "function", text
+    head = text.split("(", 1)[0].split()
+    if head and head[0] in _ABI_KINDS:
+        kind, rest = head[0], text[len(head[0]) :].lstrip()
+    if kind in ("constructor", "fallback", "receive") and "(" not in rest:
+        rest += "()"
+    if kind == "constructor" and not rest.split("(", 1)[0].strip():
+        rest = "constructor" + rest  # _split_signature needs an identifier
+    name, raw = _split_signature(rest)
+    tail = rest[rest.index(")", rest.index("(")) :]
+    # Solidity puts modifiers and an optional `returns (...)` after the params.
+    outputs: list[dict] = []
+    if "returns" in tail:
+        after = tail.split("returns", 1)[1].lstrip()
+        if after.startswith("("):
+            outputs = [
+                _parse_param(p)
+                for p in _split_top_level(after[1 : _tuple_head_end(after)])
+                if p.strip()
+            ]
+    record: dict[str, Any] = {
+        "type": kind,
+        "name": None if kind in ("constructor", "fallback", "receive") else name,
+        "inputs": [_parse_param(p) for p in raw],
+        "outputs": outputs,
+    }
+    words = tail.split("returns", 1)[0].split()
+    for word in words:
+        if word in _ABI_MUTABILITY:
+            record["stateMutability"] = word
+    if kind == "event":
+        record["anonymous"] = "anonymous" in words
+    return record
+
+
+def _abi_entry_from_json(fragment: dict) -> dict:
+    """Normalize one JSON ABI fragment into the same record shape."""
+    kind = fragment.get("type", "function")
+    if kind not in _ABI_KINDS:
+        raise ValueError(f"unknown ABI entry type {kind!r}")
+    record: dict[str, Any] = {
+        "type": kind,
+        "name": fragment.get("name") or None,
+        "inputs": _params_from_abi(fragment.get("inputs")),
+        "outputs": _params_from_abi(fragment.get("outputs")),
+    }
+    if fragment.get("stateMutability"):
+        record["stateMutability"] = fragment["stateMutability"]
+    if kind == "event":
+        record["anonymous"] = bool(fragment.get("anonymous", False))
+    if kind not in ("constructor", "fallback", "receive") and not record["name"]:
+        raise ValueError(f"ABI {kind} entry is missing a `name`")
+    return record
+
+
+def abi_inspect(
+    abi: Annotated[
+        list | dict | str,
+        Field(
+            description="A contract ABI in either representation: a JSON ABI "
+            "(array of entries, or one entry object), or human-readable Solidity "
+            "declarations (one string, or an array of them) such as 'function "
+            "transfer(address to, uint256 amount)'. A stringified JSON array or "
+            "object is accepted."
+        ),
+    ],
+) -> dict:
+    """List an ABI's entries with their canonical signatures and selectors.
+
+    Accepts a JSON ABI or human-readable declarations and returns BOTH forms for
+    every entry, so it converts in either direction. Returns {count, entries,
+    selectors, topics}: `entries` carries {type, name, signature (canonical),
+    human, inputs, outputs} per entry plus `selector` for functions and errors,
+    `topic0` and `anonymous` for events, and `stateMutability` when known;
+    `inputs`/`outputs` are JSON ABI shape, so feeding human-readable text in and
+    reading them out is the human -> JSON ABI direction, and `human` is the
+    reverse. `selectors` maps every 4-byte selector to its canonical signature
+    and `topics` every topic0 — the lookup table eth_calldata, eth_log_decode and
+    eth_revert_decode take as input. `collisions` is added only if two distinct
+    signatures share a selector. constructor/fallback/receive entries carry no
+    signature or selector, having none.
+
+    Example: abi_inspect("function transfer(address to, uint256 amount)") ->
+    selectors={"0xa9059cbb": "transfer(address,uint256)"}.
+    """
+    spec = abi
+    if isinstance(spec, str):
+        text = spec.strip()
+        spec = json.loads(text) if text.startswith(("[", "{")) else [text]
+    if isinstance(spec, dict):
+        spec = [spec]
+    if not isinstance(spec, list):
+        raise ValueError("`abi` must be a JSON ABI array/object or signature text")
+
+    records = []
+    for i, item in enumerate(spec):
+        if isinstance(item, dict):
+            records.append(_abi_entry_from_json(item))
+        elif isinstance(item, str):
+            records.append(_abi_entry_from_human(item))
+        else:
+            raise ValueError(
+                f"abi[{i}] must be an ABI object or a signature string, got "
+                f"{type(item).__name__}"
+            )
+
+    entries: list[dict] = []
+    selectors: dict[str, str] = {}
+    topics: dict[str, str] = {}
+    collisions: list[dict] = []
+    for record in records:
+        kind, name = record["type"], record["name"]
+        params = record["inputs"]
+        entry: dict[str, Any] = {"type": kind, "name": name}
+        human_params = ", ".join(_human_param(p) for p in params)
+        if kind in ("constructor", "fallback", "receive"):
+            entry["human"] = f"{kind}({human_params})" if params else f"{kind}()"
+        else:
+            canonical = f"{name}({','.join(p['type'] for p in params)})"
+            entry["signature"] = canonical
+            digest = _keccak256(canonical.encode("ascii"))
+            if kind == "event":
+                entry["topic0"] = "0x" + digest.hex()
+                if not record["anonymous"]:
+                    topics[entry["topic0"]] = canonical
+            else:
+                entry["selector"] = "0x" + digest[:4].hex()
+                previous = selectors.setdefault(entry["selector"], canonical)
+                if previous != canonical:
+                    collisions.append(
+                        {
+                            "selector": entry["selector"],
+                            "signatures": [previous, canonical],
+                        }
+                    )
+            entry["human"] = f"{kind} {name}({human_params})"
+        if kind == "event" and record["anonymous"]:
+            entry["anonymous"] = True
+            entry["human"] += " anonymous"
+        elif kind == "event":
+            entry["anonymous"] = False
+        if record.get("stateMutability"):
+            entry["stateMutability"] = record["stateMutability"]
+            if kind == "function" and record["stateMutability"] != "nonpayable":
+                entry["human"] += f" {record['stateMutability']}"
+        if record["outputs"]:
+            entry["human"] += (
+                f" returns ({', '.join(_human_param(p) for p in record['outputs'])})"
+            )
+        entry["inputs"] = _abi_json_params(params)
+        entry["outputs"] = _abi_json_params(record["outputs"])
+        entries.append(entry)
+
+    result = {
+        "count": len(entries),
+        "entries": entries,
+        "selectors": selectors,
+        "topics": topics,
+    }
+    if collisions:
+        result["collisions"] = collisions
+    return result
+
+
 # --- storage-slot layout (§1.15.4) ---------------------------------------------
 def _storage_encode_key(value: Any, key_type: str) -> bytes:
     """Encode a mapping key for slot derivation.
@@ -2322,6 +2574,7 @@ def register(mcp) -> None:
     mcp.tool()(eth_selector)
     mcp.tool()(rlp_codec)
     mcp.tool()(abi_codec)
+    mcp.tool()(abi_inspect)
     mcp.tool()(eth_calldata)
     mcp.tool()(eth_log_decode)
     mcp.tool()(eth_revert_decode)

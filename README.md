@@ -43,6 +43,8 @@ An opt-in **Ethereum/EVM toolset** (enabled via the `ethereum` extra) adds the
 primitives you reach for when working on-chain: `eth_hash` for keccak-256,
 EIP-191, and EIP-712 typed-data hashing, `abi_codec` and `rlp_codec` for ABI and
 RLP encode/decode, `eth_selector` for function and event selectors,
+`abi_inspect` for converting a contract ABI between its JSON and human-readable
+forms and listing every selector and topic0 it declares,
 `eth_calldata` for splitting a call's calldata into named, typed arguments (and
 building it back), `eth_log_decode` for turning a receipt log's topics and data
 into named event arguments, `eth_revert_decode` for turning a failed call's

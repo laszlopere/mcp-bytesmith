@@ -8,6 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `abi_inspect` — list a contract ABI's entries with their canonical signatures,
+  4-byte selectors and event topic0s, and convert the ABI between its two
+  representations. It accepts either form — a JSON ABI (the array in a compiled
+  artifact, where a struct is spelled `{"type": "tuple", "components": […]}`) or
+  human-readable Solidity declarations (`function transfer(address to, uint256
+  amount)`, what a person actually pastes) — and returns *both* for every entry,
+  so it converts in whichever direction you needed: read `inputs`/`outputs` for
+  human → JSON ABI, read `human` for the reverse. Round-tripping is a fixed
+  point, including nested tuples, arrays of structs, `indexed`, mutability and a
+  `returns (…)` clause. The `selectors` and `topics` maps are the practical
+  payload: they are exactly the lookup table `eth_calldata`, `eth_log_decode` and
+  `eth_revert_decode` want as input, so an artifact goes to a decodable
+  signature in one call. Two distinct signatures sharing a selector are reported
+  under `collisions` rather than silently overwriting each other in the map —
+  a real hazard when a proxy's function set meets its implementation's.
+  `constructor`, `fallback` and `receive` carry no signature or selector, having
+  none, and an `anonymous` event is excluded from `topics` because it never emits
+  one. It shares the signature parser with the decoding tools, so a selector it
+  reports and one `eth_selector` computes cannot disagree. Adds no dependency;
+  still the `ethereum` extra.
 - `eth_revert_decode` — turn a failed call's revert data into a human-readable
   reason. Revert data has calldata's shape — a 4-byte selector plus ABI-encoded
   arguments — and the result is discriminated by `kind`: `error` for
