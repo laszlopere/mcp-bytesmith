@@ -1574,6 +1574,377 @@ def abi_inspect(
     return result
 
 
+# --- runtime bytecode: disassembly, dispatcher, metadata (TODO 20.4) -----------
+# EVM bytecode is a flat byte string with ONE irregularity: PUSH1..PUSH32 carry
+# their immediate inline, so the bytes 0x60..0x7f swallow the 1..32 bytes that
+# follow them. Everything here depends on walking that correctly — grepping the
+# raw hex for 0x63 (PUSH4) also hits the middle of some other push's immediate,
+# which is exactly how a naive selector scraper invents functions that do not
+# exist. So the dispatcher scrape below runs over a real decode, never a regex.
+_EVM_OPCODES: dict[int, str] = {
+    0x00: "STOP",
+    0x01: "ADD",
+    0x02: "MUL",
+    0x03: "SUB",
+    0x04: "DIV",
+    0x05: "SDIV",
+    0x06: "MOD",
+    0x07: "SMOD",
+    0x08: "ADDMOD",
+    0x09: "MULMOD",
+    0x0A: "EXP",
+    0x0B: "SIGNEXTEND",
+    0x10: "LT",
+    0x11: "GT",
+    0x12: "SLT",
+    0x13: "SGT",
+    0x14: "EQ",
+    0x15: "ISZERO",
+    0x16: "AND",
+    0x17: "OR",
+    0x18: "XOR",
+    0x19: "NOT",
+    0x1A: "BYTE",
+    0x1B: "SHL",
+    0x1C: "SHR",
+    0x1D: "SAR",
+    0x20: "KECCAK256",
+    0x30: "ADDRESS",
+    0x31: "BALANCE",
+    0x32: "ORIGIN",
+    0x33: "CALLER",
+    0x34: "CALLVALUE",
+    0x35: "CALLDATALOAD",
+    0x36: "CALLDATASIZE",
+    0x37: "CALLDATACOPY",
+    0x38: "CODESIZE",
+    0x39: "CODECOPY",
+    0x3A: "GASPRICE",
+    0x3B: "EXTCODESIZE",
+    0x3C: "EXTCODECOPY",
+    0x3D: "RETURNDATASIZE",
+    0x3E: "RETURNDATACOPY",
+    0x3F: "EXTCODEHASH",
+    0x40: "BLOCKHASH",
+    0x41: "COINBASE",
+    0x42: "TIMESTAMP",
+    0x43: "NUMBER",
+    0x44: "PREVRANDAO",  # DIFFICULTY before the merge (EIP-4399)
+    0x45: "GASLIMIT",
+    0x46: "CHAINID",
+    0x47: "SELFBALANCE",
+    0x48: "BASEFEE",
+    0x49: "BLOBHASH",
+    0x4A: "BLOBBASEFEE",
+    0x50: "POP",
+    0x51: "MLOAD",
+    0x52: "MSTORE",
+    0x53: "MSTORE8",
+    0x54: "SLOAD",
+    0x55: "SSTORE",
+    0x56: "JUMP",
+    0x57: "JUMPI",
+    0x58: "PC",
+    0x59: "MSIZE",
+    0x5A: "GAS",
+    0x5B: "JUMPDEST",
+    0x5C: "TLOAD",
+    0x5D: "TSTORE",
+    0x5E: "MCOPY",
+    0x5F: "PUSH0",
+    0xF0: "CREATE",
+    0xF1: "CALL",
+    0xF2: "CALLCODE",
+    0xF3: "RETURN",
+    0xF4: "DELEGATECALL",
+    0xF5: "CREATE2",
+    0xFA: "STATICCALL",
+    0xFD: "REVERT",
+    0xFE: "INVALID",
+    0xFF: "SELFDESTRUCT",
+}
+_EVM_OPCODES.update({0x60 + i: f"PUSH{i + 1}" for i in range(32)})
+_EVM_OPCODES.update({0x80 + i: f"DUP{i + 1}" for i in range(16)})
+_EVM_OPCODES.update({0x90 + i: f"SWAP{i + 1}" for i in range(16)})
+_EVM_OPCODES.update({0xA0 + i: f"LOG{i}" for i in range(5)})
+
+# What a dispatcher does with a selector it just pushed. solc's linear dispatcher
+# compares with EQ; its binary-search dispatcher (emitted once a contract has
+# enough external functions) pivots on GT/LT against real selector values; other
+# compilers reach for XOR or SUB followed by ISZERO.
+_DISPATCH_COMPARISONS = frozenset({"EQ", "GT", "LT", "XOR", "SUB"})
+
+
+def _disassemble(code: bytes) -> list[dict]:
+    """Decode bytecode into instructions: [{pc, opcode, name}] (+ push_data)."""
+    out, pc = [], 0
+    while pc < len(code):
+        op = code[pc]
+        name = _EVM_OPCODES.get(op)
+        ins: dict[str, Any] = {"pc": pc, "opcode": f"0x{op:02x}", "name": name}
+        pc += 1
+        if name is None:
+            ins["unknown"] = True  # unassigned byte — the EVM aborts on it
+        elif 0x60 <= op <= 0x7F:  # PUSHn swallows the n bytes after it
+            n = op - 0x5F
+            immediate = code[pc : pc + n]
+            ins["push_data"] = "0x" + immediate.hex()
+            if len(immediate) < n:  # code ends inside the immediate
+                ins["truncated"] = True
+            pc += n
+        out.append(ins)
+    return out
+
+
+# --- solc's trailing CBOR metadata ---------------------------------------------
+# solc appends CBOR to the deployed code — the source metadata's IPFS/Swarm hash,
+# the compiler version — followed by a 2-byte big-endian length of that CBOR. It
+# is data, not code, so it is peeled off before disassembly. The reader below is
+# a deliberately small CBOR subset (the definite-length types solc emits) rather
+# than cbor2: that library sits behind the `serialize` extra, and this tool is
+# gated on `ethereum` alone. Anything outside the subset raises, which the caller
+# reads as "no metadata here" rather than a bad decode.
+def _cbor_read(data: bytes, pos: int) -> tuple[Any, int]:
+    """Decode one definite-length CBOR item at `pos` -> (value, next position)."""
+    if pos >= len(data):
+        raise ValueError("CBOR input truncated")
+    major, info = data[pos] >> 5, data[pos] & 0x1F
+    pos += 1
+    if info < 24:
+        value = info
+    elif info < 28:  # 24/25/26/27 -> a 1/2/4/8-byte argument follows
+        width = 1 << (info - 24)
+        if pos + width > len(data):
+            raise ValueError("CBOR argument truncated")
+        value = int.from_bytes(data[pos : pos + width], "big")
+        pos += width
+    else:
+        raise ValueError(f"unsupported CBOR additional info {info} (indefinite?)")
+
+    if major == 0:  # unsigned integer
+        return value, pos
+    if major == 1:  # negative integer
+        return -1 - value, pos
+    if major in (2, 3):  # byte string / text string
+        if pos + value > len(data):
+            raise ValueError("CBOR string longer than input")
+        payload = data[pos : pos + value]
+        return (payload if major == 2 else payload.decode("utf-8")), pos + value
+    if major == 4:  # array
+        items = []
+        for _ in range(value):
+            item, pos = _cbor_read(data, pos)
+            items.append(item)
+        return items, pos
+    if major == 5:  # map
+        mapping = {}
+        for _ in range(value):
+            key, pos = _cbor_read(data, pos)
+            if not isinstance(key, str):
+                raise ValueError("CBOR map key is not a text string")
+            mapping[key], pos = _cbor_read(data, pos)
+        return mapping, pos
+    if major == 7 and value in (20, 21, 22):
+        return {20: False, 21: True, 22: None}[value], pos
+    raise ValueError(f"unsupported CBOR major type {major}")
+
+
+def _cbor_json(value: Any) -> Any:
+    """Render a decoded CBOR value JSON-safely (byte strings become 0x-hex)."""
+    if isinstance(value, bytes):
+        return "0x" + value.hex()
+    if isinstance(value, dict):
+        return {k: _cbor_json(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_cbor_json(v) for v in value]
+    return value
+
+
+def _solc_metadata(code: bytes) -> tuple[int, int, dict] | None:
+    """(offset, CBOR length, decoded map) of the trailing metadata, else None.
+
+    None means "this code has no readable metadata trailer" — the 2-byte length
+    suffix has to land exactly on a CBOR map that ends where it says it does, so
+    a coincidental pair of trailing bytes cannot fake one.
+    """
+    if len(code) < 3:
+        return None
+    length = int.from_bytes(code[-2:], "big")
+    start = len(code) - 2 - length
+    if length == 0 or start < 0:
+        return None
+    try:
+        value, end = _cbor_read(code, start)
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if end != len(code) - 2 or not isinstance(value, dict):
+        return None
+    return start, length, value
+
+
+# base58btc, for rendering the metadata's IPFS multihash as the CIDv0 you can
+# paste into a gateway. Hand-rolled for the same reason as the CBOR reader: the
+# `base58` package lives behind the `encoding` extra (core.encode uses it), and
+# this toolset is gated on `ethereum`.
+_B58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+
+
+def _base58btc(raw: bytes) -> str:
+    """Bitcoin/IPFS base58 of `raw` (each leading zero byte becomes a '1')."""
+    number, out = int.from_bytes(raw, "big"), ""
+    while number:
+        number, rem = divmod(number, 58)
+        out = _B58_ALPHABET[rem] + out
+    return "1" * (len(raw) - len(raw.lstrip(b"\x00"))) + out
+
+
+def eth_bytecode(
+    action: Annotated[
+        Literal["disassemble", "selectors", "metadata"],
+        Field(
+            description="'disassemble' decodes the code into instructions; "
+            "'selectors' scrapes the function selectors out of its dispatcher; "
+            "'metadata' parses the trailing solc CBOR metadata."
+        ),
+    ],
+    code: Annotated[
+        str,
+        Field(
+            description="Contract bytecode as hex (0x prefix optional) — the "
+            "DEPLOYED runtime code, as returned by eth_getCode. Creation "
+            "bytecode also decodes, but its constructor carries the runtime code "
+            "as an inline blob, so the tail disassembles as data."
+        ),
+    ],
+    offset: Annotated[
+        int,
+        Field(
+            description="action=disassemble only: index of the first instruction "
+            "to return (not a byte offset), for paging through a large contract."
+        ),
+    ] = 0,
+    limit: Annotated[
+        int,
+        Field(
+            description="action=disassemble only: how many instructions to "
+            "return; 0 removes the cap and returns all of them."
+        ),
+    ] = 1024,
+) -> dict:
+    """Disassemble EVM bytecode, scrape its selectors, or read its solc metadata.
+
+    `code` is hex runtime bytecode. The trailing solc CBOR metadata is data, not
+    code, so it is excluded from both the disassembly and the selector scrape and
+    reported as `metadata_offset` instead.
+    action=disassemble -> {size, code_size, count, offset, instructions} with each
+      instruction {pc, opcode, name} plus `push_data` for PUSH1..PUSH32; an
+      unassigned byte has name null and `unknown`, and code ending mid-immediate
+      is flagged `truncated`. Output is capped at `limit` instructions, which adds
+      {truncated, next_offset} — page with `offset`, or pass limit=0 for all.
+    action=selectors -> {count, selectors, sites}: every PUSH4 the dispatcher then
+      compares (EQ, or GT/LT in solc's binary-search dispatcher), decoded rather
+      than grepped, so a PUSH4 pattern inside another push's immediate cannot
+      masquerade as one. `sites` gives the {selector, pc, op} of each comparison.
+      This is a heuristic on unstructured code: an ERC-165 interface id is a
+      PUSH4 compared with EQ and is indistinguishable from a selector here, and
+      an unconventional dispatcher may hide one. Feed the results to
+      `abi_inspect`'s `selectors` map (or a 4-byte database) to name them.
+    action=metadata -> {present, offset, length, cbor, metadata} plus
+      `solc_version` and, when the hash is an IPFS CIDv0 multihash, `ipfs_cid`.
+      Code compiled with metadata stripped returns present=false, not an error.
+
+    Example: eth_bytecode("selectors", "0x6080...") ->
+    selectors=["0xa9059cbb", "0x70a08231"].
+    """
+    raw = _to_bytes(code, "hex")
+    meta = _solc_metadata(raw)
+    body = raw[: meta[0]] if meta else raw  # the code region, metadata peeled off
+
+    if action == "disassemble":
+        if offset < 0:
+            raise ValueError(f"`offset` must be >= 0, got {offset}")
+        if limit < 0:
+            raise ValueError(f"`limit` must be >= 0 (0 removes the cap), got {limit}")
+        instructions = _disassemble(body)
+        window = instructions[offset:] if limit == 0 else instructions[offset:][:limit]
+        result: dict[str, Any] = {
+            "action": "disassemble",
+            "size": len(raw),
+            "code_size": len(body),
+            "count": len(instructions),
+            "offset": offset,
+            "instructions": window,
+        }
+        if offset + len(window) < len(instructions):
+            result["truncated"] = True
+            result["next_offset"] = offset + len(window)
+        if meta is not None:
+            result["metadata_offset"] = meta[0]
+        return result
+
+    if action == "selectors":
+        instructions = _disassemble(body)
+        selectors: list[str] = []
+        sites: list[dict] = []
+        for i, ins in enumerate(instructions):
+            if ins["name"] != "PUSH4" or ins.get("truncated"):
+                continue
+            value = ins["push_data"]
+            # 0x00000000 and 0xffffffff are the sentinel/mask constants solc emits
+            # around a dispatcher, not functions anyone declared.
+            if value in ("0x00000000", "0xffffffff"):
+                continue
+            # The comparison is usually the very next instruction, but a DUP can
+            # sit between the push and it, so look one further.
+            for following in instructions[i + 1 : i + 3]:
+                if following["name"] in _DISPATCH_COMPARISONS:
+                    sites.append(
+                        {"selector": value, "pc": ins["pc"], "op": following["name"]}
+                    )
+                    if value not in selectors:
+                        selectors.append(value)
+                    break
+        return {
+            "action": "selectors",
+            "count": len(selectors),
+            "selectors": selectors,
+            "sites": sites,
+        }
+
+    if action == "metadata":
+        if meta is None:
+            return {
+                "action": "metadata",
+                "present": False,
+                "reason": "no CBOR metadata trailer — the last two bytes are not "
+                "the length of a CBOR map ending just before them (code compiled "
+                "with --no-cbor-metadata, or not solc output at all)",
+            }
+        start, length, value = meta
+        result = {
+            "action": "metadata",
+            "present": True,
+            "offset": start,
+            "length": length,
+            "cbor": "0x" + raw[start : start + length].hex(),
+            "metadata": _cbor_json(value),
+        }
+        solc = value.get("solc")
+        if isinstance(solc, bytes) and len(solc) == 3:  # release: 3 version bytes
+            result["solc_version"] = ".".join(str(b) for b in solc)
+        elif isinstance(solc, str):  # prerelease/nightly: the version string
+            result["solc_version"] = solc
+        ipfs = value.get("ipfs")
+        # CIDv0 is the bare base58btc multihash, and only sha2-256/32 qualifies.
+        if isinstance(ipfs, bytes) and len(ipfs) == 34 and ipfs[:2] == b"\x12\x20":
+            result["ipfs_cid"] = _base58btc(ipfs)
+        return result
+
+    raise ValueError(
+        f"unknown action {action!r}; expected 'disassemble', 'selectors', or 'metadata'"
+    )
+
+
 # --- storage-slot layout (§1.15.4) ---------------------------------------------
 def _storage_encode_key(value: Any, key_type: str) -> bytes:
     """Encode a mapping key for slot derivation.
@@ -2578,6 +2949,7 @@ def register(mcp) -> None:
     mcp.tool()(eth_calldata)
     mcp.tool()(eth_log_decode)
     mcp.tool()(eth_revert_decode)
+    mcp.tool()(eth_bytecode)
     mcp.tool()(eth_storage_slot)
     mcp.tool()(eth_eoa_address)
     mcp.tool()(eth_contract_address)

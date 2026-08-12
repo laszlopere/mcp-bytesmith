@@ -49,6 +49,8 @@ forms and listing every selector and topic0 it declares,
 building it back), `eth_log_decode` for turning a receipt log's topics and data
 into named event arguments, `eth_revert_decode` for turning a failed call's
 revert data into a reason (`Error(string)`, `Panic(uint256)`, or a custom error),
+`eth_bytecode` for disassembling deployed bytecode, scraping the selectors out of
+its dispatcher, and reading its trailing solc metadata,
 `eth_tx_codec` for transactions, `eth_storage_slot`
 for storage layout, `eth_address_case` for EIP-55 checksums, `ens_namehash` for
 EIP-137 ENS namehash/labelhash, `bip39` for BIP-39 mnemonic generation,

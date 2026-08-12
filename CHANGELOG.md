@@ -8,6 +8,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `eth_bytecode` — read deployed EVM bytecode three ways: `disassemble` it into
+  instructions, scrape the function `selectors` out of its dispatcher, or parse
+  the trailing solc CBOR `metadata`. All three rest on one property — bytecode
+  has exactly one irregularity, `PUSH1`..`PUSH32` carrying their immediate
+  inline, and everything else follows from walking that correctly. Grepping the
+  raw hex for `63` + four bytes also matches the *middle* of some other push's
+  immediate, which is how a naive scraper invents functions that do not exist, so
+  the selector scrape runs over a real decode: a `PUSH4 0xa9059cbb EQ` pattern
+  buried inside a `PUSH32` is correctly seen as data. A selector is a `PUSH4`
+  that a comparison then consumes — `EQ`, or `GT`/`LT`, because solc's
+  binary-search dispatcher pivots on genuine selector values (a pivot is deduped
+  in `selectors` and shows up twice in `sites`, which reports the `pc` and
+  comparison behind every hit). The `0x00000000`/`0xffffffff` sentinels are
+  dropped, and this stays an honest heuristic rather than a decompile: an ERC-165
+  interface id is also a `PUSH4` compared with `EQ`, and nothing in the bytecode
+  distinguishes the two. Feed the results to `abi_inspect`'s `selectors` map to
+  name them. The metadata trailer is peeled off *first* and excluded from both
+  the disassembly and the scrape — it is data, not code — and reported as
+  `metadata_offset` so nothing is silently dropped; it yields the compiler
+  version and, when present, the source's IPFS CID. Code compiled with metadata
+  stripped reports `present: false` rather than erroring, and a trailer is only
+  believed when it is a CBOR map ending exactly where its 2-byte length claims,
+  so a coincidental pair of trailing bytes cannot fake one. Disassembly is capped
+  at `limit` instructions (0 removes the cap) with `next_offset` for paging — a
+  24 KB contract is some twelve thousand instructions. Unassigned bytes come back
+  as `name: null` with `unknown` rather than an invented mnemonic, and code
+  ending mid-immediate is flagged `truncated`. Adds no dependency and still the
+  `ethereum` extra: `cbor2` lives behind the `serialize` extra and `base58`
+  behind `encoding`, so the CBOR subset and base58btc are hand-rolled here and
+  cross-checked against both libraries in the tests.
 - `abi_inspect` — list a contract ABI's entries with their canonical signatures,
   4-byte selectors and event topic0s, and convert the ABI between its two
   representations. It accepts either form — a JSON ABI (the array in a compiled

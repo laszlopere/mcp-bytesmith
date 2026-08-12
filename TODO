@@ -671,12 +671,46 @@ Checkbox legend:  [ ] not started   [~] in progress   [x] done
                      hex, so the two can never drift.
                reused from 20.1: _parse_signature, _calldata_arg, the head-size
                      guard and the soft-mismatch pattern.
-    [ ] 20.4.  eth_bytecode(action req, code req)
+    [x] 20.4.  eth_bytecode(action req, code req, offset opt=0, limit opt=1024)
                desc: Disassemble runtime bytecode, scrape the dispatcher's
-                     selectors, parse the trailing solc CBOR metadata
-                     (cbor2 already ships for §11.9).
+                     selectors, parse the trailing solc CBOR metadata.
                gate: ethereum   (pure-python opcode table)
                action: disassemble | selectors | metadata
+               metadata trailer is peeled off FIRST and excluded from both the
+                     disassembly and the selector scrape — it is data, not code
+                     — and reported as `metadata_offset` so nothing is hidden.
+               action=disassemble -> {size, code_size, count, offset,
+                     instructions}; instruction = {pc, opcode, name} + push_data
+                     (PUSH1-32). An unassigned byte is {name: null, unknown},
+                     code ending mid-immediate is {truncated}. Capped at `limit`
+                     instructions -> adds {truncated, next_offset}; limit=0
+                     returns all. NOT in the original signature: a 24KB contract
+                     is ~12k instructions, which is a payload no model wants
+                     unpaged.
+               action=selectors -> {count, selectors, sites}: every PUSH4 that a
+                     comparison (EQ / GT / LT / XOR / SUB, within 2 instructions,
+                     so a DUP may sit between) consumes. Scraped off a real
+                     decode, never the hex: PUSH immediates are swallowed, so a
+                     `63 <4 bytes> 14` pattern INSIDE another push cannot
+                     masquerade as a selector — the classic false positive.
+                     0x00000000/0xffffffff sentinels dropped. GT/LT are kept
+                     because solc's binary-search dispatcher pivots on real
+                     selector values; a pivot is deduped in `selectors` and
+                     appears twice in `sites`. Honest heuristic, not a decompile:
+                     an ERC-165 interface id is a PUSH4 compared with EQ and is
+                     indistinguishable here.
+               action=metadata -> {present, offset, length, cbor, metadata} +
+                     solc_version (3 version bytes, or a prerelease string) and
+                     ipfs_cid (base58btc of the multihash, sha2-256/32 only).
+                     Stripped metadata is present=false + reason, not an error;
+                     the trailer must be a CBOR MAP ending exactly where its
+                     2-byte length says, so trailing coincidence cannot fake one.
+               deps: cbor2 sits behind the `serialize` extra and base58 behind
+                     `encoding`, but this tool is gated on `ethereum` alone — so
+                     both are hand-rolled here (a definite-length CBOR subset,
+                     ~50 lines, and base58btc, ~8). Tests cross-check them
+                     against cbor2 and base58 where installed, so neither is
+                     only ever compared with itself.
     [ ] 20.5.  + eth_storage_slot (13.5): well-known layouts
                desc: EIP-1967 impl/admin/beacon, UUPS (EIP-1822), ERC-7201
                      namespaced, diamond storage. Extend the tool, no new one.
