@@ -1967,58 +1967,177 @@ def _storage_encode_key(value: Any, key_type: str) -> bytes:
     raise ValueError(f"unsupported mapping key type: {key_type!r}")
 
 
-def _storage_result(slot_int: int) -> dict:
+def _storage_result(slot_int: int, **extra: Any) -> dict:
     slot_int &= 2**256 - 1  # storage space is 2^256 slots
     return {
         "slot": str(slot_int),
         "slot_hex": "0x" + slot_int.to_bytes(32, "big").hex(),
+        **extra,
     }
+
+
+# --- well-known constant layouts (TODO 20.5) -----------------------------------
+# A proxy, and any library that must not collide with the contract it is mixed
+# into, parks its state at a CONSTANT slot derived by keccak from a label string
+# — far outside the sequential range solc allocates from slot 0 upwards, and (for
+# the -1 variants) outside keccak's own image, so no mapping or array entry can
+# ever hash onto it either. Every constant here is DERIVED, never pasted, so the
+# published hex and this code cannot drift; the tests assert the published values.
+_EIP1967_LABELS = {
+    "implementation": "eip1967.proxy.implementation",
+    "admin": "eip1967.proxy.admin",
+    "beacon": "eip1967.proxy.beacon",
+    "rollback": "eip1967.proxy.rollback",
+}
+_EIP1822_LABEL = "PROXIABLE"  # EIP-1822 proxiableUUID — keccak with NO -1
+
+# Spellings of the same layout that people actually type. `array` is the older
+# alias this tool has always accepted for `dynamic_array`.
+_LAYOUT_ALIASES = {
+    "array": "dynamic_array",
+    "erc1967": "eip1967",
+    "erc1822": "eip1822",
+    "uups": "eip1822",
+    "proxiable": "eip1822",
+    "eip7201": "erc7201",
+    "namespaced": "erc7201",
+    "eip2535": "diamond",
+    "erc2535": "diamond",
+}
+_LAYOUT_KINDS = (
+    "mapping",
+    "dynamic_array",
+    "eip1967",
+    "eip1822",
+    "erc7201",
+    "diamond",
+)
+
+
+def _label_slot(label: str) -> int:
+    """keccak256(label) as a slot number."""
+    return int.from_bytes(_keccak256(label.encode("utf-8")), "big")
+
+
+def _erc7201_slot(namespace: str) -> int:
+    """ERC-7201: keccak256(abi.encode(keccak256(id) - 1)) with the low byte cleared.
+
+    Clearing the low byte aligns the root to a 256-slot boundary, so the struct
+    that lives there can grow into the alignment padding instead of into whatever
+    the next namespace hashed to.
+    """
+    inner = (_label_slot(namespace) - 1) & (2**256 - 1)
+    return int.from_bytes(_keccak256(inner.to_bytes(32, "big")), "big") & ~0xFF
+
+
+def _storage_namespace(spec: dict, kind: str) -> str:
+    """The `namespace` of a namespaced layout, minus any `erc7201:` annotation."""
+    namespace = spec.get("namespace")
+    if not isinstance(namespace, str) or not namespace:
+        raise ValueError(f"{kind} layout needs a 'namespace' string")
+    # Solidity tags the struct with `@custom:storage-location erc7201:<id>`, so
+    # the id is usually copied out of source with that prefix still attached.
+    prefix = "erc7201:"
+    return namespace[len(prefix) :] if namespace.startswith(prefix) else namespace
 
 
 def eth_storage_slot(
     layout: Annotated[
         dict[str, Any],
         Field(
-            description='Layout object: {"kind":"mapping"|"dynamic_array", "slot":'
-            " <declared base slot, int/decimal/0x-hex>, ...}. mapping takes optional"
-            ' "key_type" (default "uint256"; lists for nested mappings); '
-            'dynamic_array takes optional "element_size" in slots (default 1). A '
-            "stringified JSON object is accepted."
+            description='Layout object: {"kind": ..., ...}. Declared layouts take a'
+            ' "slot" (int/decimal/0x-hex): "mapping" (+ optional "key_type", default'
+            ' "uint256", or a list for nested mappings) and "dynamic_array" (+ '
+            'optional "element_size" in slots, default 1). Well-known constant '
+            'layouts take no slot: "eip1967" (+ "name": implementation|admin|beacon|'
+            'rollback), "eip1822" (aka uups), "erc7201" and "diamond" (+ a '
+            '"namespace" string). A stringified JSON object is accepted.'
         ),
     ],
     key: Annotated[
         Any,
         Field(
             description="Mapping key (required for kind=mapping); pass a list of "
-            "keys outer-to-inner for nested mappings. Ignored for arrays."
+            "keys outer-to-inner for nested mappings. Ignored otherwise."
         ),
     ] = None,
     index: Annotated[
         int | None,
         Field(
             description="Element index (required for kind=dynamic_array); "
-            "int/decimal/0x-hex. Ignored for mappings."
+            "int/decimal/0x-hex. For erc7201/diamond it is the optional slot "
+            "offset of a member within the struct that starts at the root. "
+            "Ignored otherwise."
         ),
     ] = None,
 ) -> dict:
-    """Compute the storage slot for a mapping/array entry given a layout.
+    """Compute a storage slot: a mapping/array entry, or a well-known layout's root.
 
-    layout: {"kind": "mapping"|"dynamic_array", "slot": <declared slot>, ...}
-      mapping       -> needs `key`; "key_type" (default uint256). For nested
-                       mappings pass `key` (and optionally "key_type") as lists.
-      dynamic_array -> needs `index`; optional "element_size" in slots (default 1).
-    Returns {slot, slot_hex}: the slot as a decimal string and a 0x 32-byte word.
+    layout: {"kind": …} — the first two describe a layout you declared, the rest
+    are the standard constant slots, which need no "slot" of their own:
+      mapping       -> needs "slot" and `key`; "key_type" (default uint256). For
+                       nested mappings pass `key` (and "key_type") as lists.
+      dynamic_array -> needs "slot" and `index`; optional "element_size" (slots).
+      eip1967       -> the proxy slots, keccak256(label) - 1. Optional "name":
+                       implementation (default), admin, beacon, or rollback.
+      eip1822       -> UUPS proxiableUUID, keccak256("PROXIABLE") — no -1.
+      erc7201       -> namespaced storage root for "namespace",
+                       keccak256(abi.encode(keccak256(ns) - 1)) & ~0xff. An
+                       `erc7201:` annotation prefix on the namespace is stripped.
+      diamond       -> EIP-2535 diamond storage, plain keccak256("namespace").
+    Returns {slot, slot_hex}: the slot as a decimal string and a 0x 32-byte word,
+    plus `formula` (and `name`/`namespace`) for the constant layouts. Every
+    constant is derived by keccak here, not pasted from the EIP. The results
+    compose: feed a namespaced root back in as another layout's "slot" to reach
+    a mapping or array declared inside that struct, and use `index` to step to a
+    later member of it.
 
-    Example: eth_storage_slot({"kind":"mapping","slot":1},
-    "0x0000000000000000000000000000000000000000") ->
-    slot_hex="0xa6eef7e35abe7026729641147f7915573c7e97b47efa546f5f6e3230263bcb49".
+    Example: eth_storage_slot({"kind":"eip1967"}) ->
+    slot_hex="0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc".
     """
     spec = json.loads(layout) if isinstance(layout, str) else layout
-    try:
-        kind = spec["kind"]
+    if not isinstance(spec, dict):
+        raise ValueError("`layout` must be an object with a 'kind'")
+    kind = spec.get("kind")
+    if not isinstance(kind, str):
+        raise ValueError("layout needs 'kind'")
+    kind = _LAYOUT_ALIASES.get(kind, kind)
+
+    if kind in ("mapping", "dynamic_array"):
+        if "slot" not in spec:
+            raise ValueError(f"{kind} layout needs 'slot' (its declared base slot)")
         base = _eip712_parse_int(spec["slot"])
-    except (KeyError, TypeError) as exc:
-        raise ValueError("layout needs 'kind' and 'slot'") from exc
+
+    if kind == "eip1967":
+        name = spec.get("name", "implementation")
+        label = _EIP1967_LABELS.get(name)
+        if label is None:
+            raise ValueError(
+                f"unknown eip1967 slot name {name!r}; expected one of "
+                f"{', '.join(_EIP1967_LABELS)}"
+            )
+        return _storage_result(
+            _label_slot(label) - 1, name=name, formula=f'keccak256("{label}") - 1'
+        )
+
+    if kind == "eip1822":
+        return _storage_result(
+            _label_slot(_EIP1822_LABEL), formula=f'keccak256("{_EIP1822_LABEL}")'
+        )
+
+    if kind in ("erc7201", "diamond"):
+        namespace = _storage_namespace(spec, kind)
+        offset = _eip712_parse_int(index) if index is not None else 0
+        if kind == "erc7201":
+            root = _erc7201_slot(namespace)
+            formula = f'keccak256(abi.encode(keccak256("{namespace}") - 1)) & ~0xff'
+        else:
+            root = _label_slot(namespace)
+            formula = f'keccak256("{namespace}")'
+        result = _storage_result(root + offset, namespace=namespace, formula=formula)
+        if index is not None:
+            result["index"] = offset  # a member of the struct at the root
+        return result
 
     if kind == "mapping":
         if key is None:
@@ -2033,7 +2152,7 @@ def eth_storage_slot(
             cur = _keccak256(_storage_encode_key(k, ktype) + cur)
         return _storage_result(int.from_bytes(cur, "big"))
 
-    if kind in ("dynamic_array", "array"):
+    if kind == "dynamic_array":
         if index is None:
             raise ValueError("dynamic_array layout requires `index`")
         element_size = _eip712_parse_int(spec.get("element_size", 1))
@@ -2041,7 +2160,7 @@ def eth_storage_slot(
         return _storage_result(start + _eip712_parse_int(index) * element_size)
 
     raise ValueError(
-        f"unknown layout kind {kind!r}; expected 'mapping' or 'dynamic_array'"
+        f"unknown layout kind {kind!r}; expected one of {', '.join(_LAYOUT_KINDS)}"
     )
 
 

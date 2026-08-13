@@ -52,7 +52,9 @@ revert data into a reason (`Error(string)`, `Panic(uint256)`, or a custom error)
 `eth_bytecode` for disassembling deployed bytecode, scraping the selectors out of
 its dispatcher, and reading its trailing solc metadata,
 `eth_tx_codec` for transactions, `eth_storage_slot`
-for storage layout, `eth_address_case` for EIP-55 checksums, `ens_namehash` for
+for storage layout — mapping and array slots, plus the well-known constant ones
+(EIP-1967 proxy, UUPS, ERC-7201 namespaced, diamond) — `eth_address_case` for
+EIP-55 checksums, `ens_namehash` for
 EIP-137 ENS namehash/labelhash, `bip39` for BIP-39 mnemonic generation,
 validation, and seed derivation, `bip32_derive` for BIP-32/44 HD key and address
 derivation from a seed, `eth_eoa_address` for the address and public key behind a

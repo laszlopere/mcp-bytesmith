@@ -711,10 +711,35 @@ Checkbox legend:  [ ] not started   [~] in progress   [x] done
                      ~50 lines, and base58btc, ~8). Tests cross-check them
                      against cbor2 and base58 where installed, so neither is
                      only ever compared with itself.
-    [ ] 20.5.  + eth_storage_slot (13.5): well-known layouts
+    [x] 20.5.  + eth_storage_slot (13.5): well-known layouts
                desc: EIP-1967 impl/admin/beacon, UUPS (EIP-1822), ERC-7201
                      namespaced, diamond storage. Extend the tool, no new one.
                gate: ethereum
+               new layout kinds, none of which take a `slot` (that is the point
+                     — the slot IS the constant):
+                     eip1967 + name: implementation (default) | admin | beacon |
+                             rollback  -> keccak256(label) - 1
+                     eip1822 -> keccak256("PROXIABLE"), NO -1. The asymmetry is
+                             the trap the tool exists to absorb.
+                     erc7201 + namespace -> keccak256(abi.encode(keccak256(ns)
+                             - 1)) & ~0xff; the mask aligns the root to a
+                             256-slot boundary so the struct grows into the
+                             padding. An `erc7201:` prefix (how Solidity writes
+                             it in @custom:storage-location) is stripped.
+                     diamond + namespace -> plain keccak256(ns).
+               ret: + formula (the derivation used) and name/namespace. Every
+                     constant is DERIVED by keccak, never pasted, as in 20.3 —
+                     the tests assert the published hex, so neither can drift.
+                     Vectors: ERC-7201's own example.main, OZ v5's ERC20/Ownable
+                     roots, and the four EIP-1967 slots (impl + admin also read
+                     off live mainnet proxies during development).
+               compose: a constant root feeds back in as another layout's `slot`
+                     (slot already accepts 0x-hex), which is how you reach a
+                     mapping declared inside a namespaced struct; `index` steps
+                     to a later member of the struct at the root.
+               aliases: erc1967, erc1822/uups/proxiable, eip7201/namespaced,
+                     eip2535/erc2535 — plus the pre-existing array alias, now
+                     folded into one _LAYOUT_ALIASES map.
     [ ] 20.6.  eth_merkle(action req, leaves opt, proof opt, root opt)
                desc: OpenZeppelin sorted-pair keccak merkle for airdrop /
                      allowlist work; the sort convention is easy to get wrong.
