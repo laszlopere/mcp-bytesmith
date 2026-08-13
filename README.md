@@ -41,7 +41,9 @@ or HKDF.
 
 An opt-in **Ethereum/EVM toolset** (enabled via the `ethereum` extra) adds the
 primitives you reach for when working on-chain: `eth_hash` for keccak-256,
-EIP-191, and EIP-712 typed-data hashing, `abi_codec` and `rlp_codec` for ABI and
+EIP-191, EIP-712 typed-data, and EIP-7702 authorization hashing,
+`eth_userop_hash` for the ERC-4337 userOpHash (EntryPoint 0.6/0.7/0.8),
+`abi_codec` and `rlp_codec` for ABI and
 RLP encode/decode, `eth_selector` for function and event selectors,
 `abi_inspect` for converting a contract ABI between its JSON and human-readable
 forms and listing every selector and topic0 it declares,

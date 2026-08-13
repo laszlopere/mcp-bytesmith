@@ -14,10 +14,13 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""TODO 10.4 / plan §2.1.4 — eth_hash (keccak-256 / EIP-191 / EIP-712).
+"""TODO 10.4 / plan §2.1.4 — eth_hash (keccak-256 / EIP-191 / EIP-712 / EIP-7702).
 
 keccak/eip191 vectors are the well-known canonical digests; the EIP-712 vector
-is the Mail/Person example published in the EIP-712 specification itself."""
+is the Mail/Person example published in the EIP-712 specification itself. The
+EIP-7702 authorization (TODO 20.9) is pinned against its preimage spelled out
+byte by byte — 0x05 || rlp([chain_id, address, nonce]) — and against what the
+RLP decoder reads back out of it."""
 
 import asyncio
 import json
@@ -34,6 +37,7 @@ from mcp_bytesmith.eth import (  # noqa: E402
     _keccak256,
     available,
     eth_hash,
+    rlp_codec,
 )
 from mcp_bytesmith.server import mcp  # noqa: E402
 
@@ -138,6 +142,87 @@ def test_eip712_missing_keys_raises():
         eth_hash("eip712", json.dumps({"primaryType": "Mail"}))
 
 
+# --- EIP-7702 authorization tuple (TODO 20.9) ----------------------------------
+AUTHORITY = {
+    "chainId": 1,
+    "address": "0x1111111111111111111111111111111111111111",
+    "nonce": 0,
+}
+
+
+def test_eip7702_preimage_is_the_magic_byte_and_the_rlp_tuple():
+    out = eth_hash("eip7702", AUTHORITY)
+    # 05  d7 = list(23 bytes)  01 = chain 1  94 = 20-byte string  addr  80 = nonce 0
+    assert out["preimage"] == "0x05" + "d7" + "01" + "94" + "11" * 20 + "80"
+    assert out["hash"] == "0x" + _keccak256(bytes.fromhex(out["preimage"][2:])).hex()
+
+
+def test_eip7702_preimage_decodes_back_to_the_tuple():
+    out = eth_hash("eip7702", {**AUTHORITY, "chainId": 8453, "nonce": 42})
+    raw = bytes.fromhex(out["preimage"][2:])
+    assert raw[0] == 0x05  # the MAGIC that keeps it off the transaction types
+    decoded = rlp_codec("decode", "0x" + raw[1:].hex())["decoded"]
+    assert decoded == ["0x2105", "0x" + "11" * 20, "0x2a"]
+
+
+def test_eip7702_chain_id_zero_is_a_value_not_a_gap():
+    # chainId 0 authorizes the delegation on every chain; RLP writes it empty.
+    out = eth_hash("eip7702", {**AUTHORITY, "chainId": 0})
+    assert out["preimage"] == "0x05" + "d7" + "80" + "94" + "11" * 20 + "80"
+    assert out["hash"] != eth_hash("eip7702", AUTHORITY)["hash"]
+
+
+def test_eip7702_accepts_snake_case_hex_and_a_json_string():
+    canonical = eth_hash("eip7702", {**AUTHORITY, "chainId": 42, "nonce": 255})
+    assert eth_hash("eip7702", {**AUTHORITY, "chain_id": 42, "nonce": "0xff"}) == (
+        canonical
+    )
+    assert (
+        eth_hash("eip7702", json.dumps({**AUTHORITY, "chainId": "42", "nonce": 255}))
+        == canonical
+    )
+
+
+def test_eip7702_every_field_changes_the_hash():
+    base = eth_hash("eip7702", AUTHORITY)["hash"]
+    assert eth_hash("eip7702", {**AUTHORITY, "chainId": 2})["hash"] != base
+    assert eth_hash("eip7702", {**AUTHORITY, "nonce": 1})["hash"] != base
+    assert eth_hash("eip7702", {**AUTHORITY, "address": "0x" + "22" * 20})["hash"] != (
+        base
+    )
+
+
+def test_eip7702_output_format_applies_to_both_fields():
+    out = eth_hash("eip7702", AUTHORITY, output_format="base64")
+    hex_out = eth_hash("eip7702", AUTHORITY)
+    assert out["hash"] == _from_bytes(bytes.fromhex(hex_out["hash"][2:]), "base64")
+    assert out["preimage"] == _from_bytes(
+        bytes.fromhex(hex_out["preimage"][2:]), "base64"
+    )
+
+
+def test_eip7702_missing_fields_are_named():
+    with pytest.raises(ValueError, match="missing address, nonce"):
+        eth_hash("eip7702", {"chainId": 1})
+
+
+def test_eip7702_out_of_range_nonce_raises():
+    with pytest.raises(ValueError, match=r"nonce out of range"):
+        eth_hash("eip7702", {**AUTHORITY, "nonce": 2**64})
+
+
+def test_eip7702_bad_address_raises():
+    with pytest.raises(ValueError, match="not a 20-byte hex address"):
+        eth_hash("eip7702", {**AUTHORITY, "address": "0xdeadbeef"})
+
+
+def test_eip7702_non_object_data_raises():
+    with pytest.raises(ValueError, match="must be an object"):
+        eth_hash("eip7702", "[1, 2, 3]")
+    with pytest.raises(ValueError):  # not JSON at all (as for eip712)
+        eth_hash("eip7702", "0xdeadbeef")
+
+
 # --- error paths ---------------------------------------------------------------
 def test_unknown_kind_raises():
     with pytest.raises(ValueError):
@@ -208,7 +293,7 @@ def test_available_false_when_crypto_missing(monkeypatch):
 def test_registered_with_enum_schema():
     tool = next(t for t in asyncio.run(mcp.list_tools()) if t.name == "eth_hash")
     props = tool.inputSchema["properties"]
-    assert props["kind"]["enum"] == ["keccak256", "eip191", "eip712"]
+    assert props["kind"]["enum"] == ["keccak256", "eip191", "eip712", "eip7702"]
     assert props["input_format"]["enum"] == ["text", "hex", "base64"]
     assert props["output_format"]["enum"] == ["hex", "base64"]
 

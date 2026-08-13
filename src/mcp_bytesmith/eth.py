@@ -193,13 +193,60 @@ def _eip712_digest(typed_data: dict) -> tuple[bytes, bytes, bytes]:
     return digest, domain_separator, struct_hash
 
 
+# --- EIP-7702 authorization hash (TODO 20.9) -----------------------------------
+def _normalized_keys(obj: dict) -> dict:
+    """Re-key an object canonically: lowercased, underscores dropped.
+
+    The JSON these tools consume is camelCase, because that is what a node or a
+    bundler emits (`maxFeePerGas`, `chainId`), while a caller writing the object
+    by hand reaches for snake_case. They name the same field, so neither spelling
+    should be a silent miss — and a silent miss here is a wrong hash, not an error.
+    """
+    return {str(k).replace("_", "").lower(): v for k, v in obj.items()}
+
+
+def _eip7702_digest(authorization: dict) -> tuple[bytes, bytes]:
+    """(digest, signed preimage) for an EIP-7702 authorization tuple.
+
+    The authority signs keccak256(0x05 || rlp([chain_id, address, nonce])). The
+    0x05 MAGIC namespaces the payload away from every transaction type, so a
+    signed authorization can never be replayed as a transaction or vice versa.
+    chain_id 0 is meaningful rather than missing: it authorizes the delegation on
+    EVERY chain. (_rlp_encode lives in the RLP section further down.)
+    """
+    fields = _normalized_keys(authorization)
+    missing = [
+        name
+        for name, key in (
+            ("chainId", "chainid"),
+            ("address", "address"),
+            ("nonce", "nonce"),
+        )
+        if key not in fields
+    ]
+    if missing:
+        raise ValueError(
+            f"eip7702 data needs 'chainId', 'address', and 'nonce'; missing "
+            f"{', '.join(missing)}"
+        )
+    chain_id = _eip712_parse_int(fields["chainid"])
+    nonce = _eip712_parse_int(fields["nonce"])
+    if chain_id < 0 or chain_id >= 2**256:
+        raise ValueError(f"chainId out of range (0..2^256-1): {chain_id}")
+    if not 0 <= nonce < 2**64:  # EIP-2681 caps account nonces
+        raise ValueError(f"nonce out of range (0..2^64-1): {nonce}")
+    address = _address_body(fields["address"])
+    preimage = b"\x05" + _rlp_encode([chain_id, "0x" + address, nonce])
+    return _keccak256(preimage), preimage
+
+
 def eth_hash(
     kind: Annotated[
-        Literal["keccak256", "eip191", "eip712"],
+        Literal["keccak256", "eip191", "eip712", "eip7702"],
         Field(
             description="Hash flavor: 'keccak256' (raw Ethereum keccak-256), "
-            "'eip191' (personal_sign prefixed message), or 'eip712' (typed-data "
-            "digest)."
+            "'eip191' (personal_sign prefixed message), 'eip712' (typed-data "
+            "digest), or 'eip7702' (delegation authorization tuple)."
         ),
     ],
     data: Annotated[
@@ -208,7 +255,8 @@ def eth_hash(
             description="Polymorphic: for keccak256/eip191 it is the message bytes "
             "decoded per input_format; for eip712 it is the typed-data JSON object "
             "(a JSON string or already-parsed dict with types/primaryType/domain/"
-            "message) and input_format is ignored."
+            "message) and input_format is ignored; for eip7702 it is the "
+            "authorization object {chainId, address, nonce}."
         ),
     ],
     input_format: Annotated[
@@ -223,11 +271,16 @@ def eth_hash(
         Field(description="Digest encoding: 'hex' is 0x-prefixed, or 'base64'."),
     ] = "hex",
 ) -> dict:
-    """Compute an Ethereum hash: raw keccak-256, EIP-191, or EIP-712 typed-data.
+    """Compute an Ethereum hash: keccak-256, EIP-191, EIP-712, or EIP-7702.
 
     Returns {kind, hash}. For kind=eip712 the result also carries
-    {domain_separator, struct_hash}, the two EIP-712 component hashes. Note
-    keccak-256 is the pre-NIST Ethereum variant, not hashlib's SHA3-256.
+    {domain_separator, struct_hash}, the two EIP-712 component hashes. For
+    kind=eip7702 `data` is the authorization tuple {chainId, address, nonce} and
+    the result carries the `preimage` that was hashed, 0x05 || rlp([chain_id,
+    address, nonce]) — the 0x05 keeps a signed authorization from ever being
+    replayed as a transaction. A chainId of 0 is not a missing value there: it
+    authorizes the delegation on every chain. Note keccak-256 is the pre-NIST
+    Ethereum variant, not hashlib's SHA3-256.
 
     Example: eth_hash("keccak256", "hello", "text") ->
     hash="0x1c8aff950685c2ed4bc3174f3472287b56d9517b9c948127319a09a7a36deac8".
@@ -251,8 +304,21 @@ def eth_hash(
             "domain_separator": _from_bytes(domain_separator, output_format),
             "struct_hash": _from_bytes(struct_hash, output_format),
         }
+    if kind == "eip7702":
+        # `data` is the authorization tuple (string or already-parsed dict).
+        authorization = json.loads(data) if isinstance(data, str) else data
+        if not isinstance(authorization, dict):
+            raise ValueError(
+                "eip7702 data must be an object with 'chainId', 'address', and 'nonce'"
+            )
+        digest, preimage = _eip7702_digest(authorization)
+        return {
+            "kind": kind,
+            "hash": _from_bytes(digest, output_format),
+            "preimage": _from_bytes(preimage, output_format),
+        }
     raise ValueError(
-        f"unknown kind {kind!r}; expected 'keccak256', 'eip191', or 'eip712'"
+        f"unknown kind {kind!r}; expected 'keccak256', 'eip191', 'eip712', or 'eip7702'"
     )
 
 
@@ -1945,6 +2011,350 @@ def eth_bytecode(
     )
 
 
+# --- ERC-4337 userOpHash (TODO 20.9) -------------------------------------------
+# The id of an account-abstraction operation, and the digest the account's
+# signature covers. It is a structured keccak over the ABI encoding of the
+# operation with its three `bytes` members replaced by their hashes, bound to the
+# EntryPoint address and the chain id so the same operation cannot be replayed
+# against another EntryPoint or another chain. `signature` is the one field NOT
+# hashed — it signs this value, so it cannot be inside it.
+#
+# The three live EntryPoint versions differ enough that guessing is not viable:
+#   0.6  the operation carries six separate gas fields.
+#   0.7  PackedUserOperation — verificationGasLimit/callGasLimit share one word
+#        (accountGasLimits) and maxPriorityFeePerGas/maxFeePerGas share another
+#        (gasFees), each as two 16-byte halves, HIGH half first.
+#   0.8  the same packed struct, but hashed as EIP-712 typed data under the
+#        domain {name: "ERC4337", version: "1", chainId, verifyingContract}.
+# EntryPoint is deployed deterministically, so the same three addresses appear on
+# every chain and the version can be read off the address.
+_ENTRY_POINTS = {
+    "0.6": "0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789",
+    "0.7": "0x0000000071727De22E5E9d8BAf0edAc6f37da032",
+    "0.8": "0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108",
+}
+# keyed by address BODY (no 0x, lowercased) — what _address_body hands back
+_ENTRY_POINT_VERSIONS = {a[2:].lower(): v for v, a in _ENTRY_POINTS.items()}
+
+# v0.8 hashes the packed operation as EIP-712 typed data. Both type hashes are
+# derived from their strings here, never pasted (as in eth_revert_decode).
+_USEROP_TYPE = (
+    "PackedUserOperation(address sender,uint256 nonce,bytes initCode,"
+    "bytes callData,bytes32 accountGasLimits,uint256 preVerificationGas,"
+    "bytes32 gasFees,bytes paymasterAndData)"
+)
+_USEROP_DOMAIN_TYPE = (
+    "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
+)
+_USEROP_DOMAIN = ("ERC4337", "1")  # EntryPoint v0.8's EIP-712 domain name/version
+
+
+def _hex_hash(raw: bytes) -> str:
+    """keccak256 of a member's bytes, as the 0x-hex word the encoding wants."""
+    return "0x" + _keccak256(raw).hex()
+
+
+def _userop_field(fields: dict, key: str, label: str) -> Any:
+    """A required non-numeric field of a user operation."""
+    if not fields.get(key):
+        raise ValueError(f"user operation is missing `{label}`")
+    return fields[key]
+
+
+def _userop_uint(fields: dict, key: str, label: str, default: int | None = None) -> int:
+    """A required (or defaulted) uint field of a user operation."""
+    if key not in fields or fields[key] is None:
+        if default is None:
+            raise ValueError(f"user operation is missing `{label}`")
+        return default
+    value = _eip712_parse_int(fields[key])
+    if value < 0:
+        raise ValueError(f"`{label}` must not be negative: {value}")
+    return value
+
+
+def _userop_bytes(fields: dict, key: str) -> bytes:
+    """A `bytes` field of a user operation; absent means empty, as on the wire."""
+    value = fields.get(key)
+    return _to_bytes(value, "hex") if value else b""
+
+
+def _pack_gas_word(high: int, high_label: str, low: int, low_label: str) -> bytes:
+    """Two gas values in one 32-byte word, 16 bytes each — v0.7's packing."""
+    for value, label in ((high, high_label), (low, low_label)):
+        if value >= 2**128:
+            raise ValueError(f"`{label}` does not fit in 16 bytes: {value}")
+    return high.to_bytes(16, "big") + low.to_bytes(16, "big")
+
+
+def _packed_userop(fields: dict) -> dict[str, Any]:
+    """The four packed members of a v0.7/v0.8 operation, from either JSON shape.
+
+    A bundler's eth_sendUserOperation takes the UNPACKED form (`factory`,
+    `verificationGasLimit`, `paymasterVerificationGasLimit`, …) while the
+    EntryPoint hashes the PACKED one, and doing that packing by hand — two
+    16-byte halves per word, high half first, three concatenated paymaster fields
+    — is the step this exists to get right. Either shape is accepted; an
+    already-packed field wins over the parts it would have been built from.
+    """
+    init_code = _userop_bytes(fields, "initcode")
+    if not init_code and fields.get("factory"):
+        # v0.8 sets factory to the magic 0x7702 for an EIP-7702 account, which
+        # concatenates the same way — no special case needed.
+        init_code = _to_bytes(fields["factory"], "hex") + _userop_bytes(
+            fields, "factorydata"
+        )
+
+    if fields.get("accountgaslimits"):
+        account_gas_limits = _to_bytes(fields["accountgaslimits"], "hex")
+        if len(account_gas_limits) != 32:
+            raise ValueError("`accountGasLimits` must be a 32-byte word")
+    else:
+        account_gas_limits = _pack_gas_word(
+            _userop_uint(fields, "verificationgaslimit", "verificationGasLimit"),
+            "verificationGasLimit",
+            _userop_uint(fields, "callgaslimit", "callGasLimit"),
+            "callGasLimit",
+        )
+
+    if fields.get("gasfees"):
+        gas_fees = _to_bytes(fields["gasfees"], "hex")
+        if len(gas_fees) != 32:
+            raise ValueError("`gasFees` must be a 32-byte word")
+    else:
+        gas_fees = _pack_gas_word(
+            _userop_uint(fields, "maxpriorityfeepergas", "maxPriorityFeePerGas"),
+            "maxPriorityFeePerGas",
+            _userop_uint(fields, "maxfeepergas", "maxFeePerGas"),
+            "maxFeePerGas",
+        )
+
+    paymaster_and_data = _userop_bytes(fields, "paymasteranddata")
+    if not paymaster_and_data and fields.get("paymaster"):
+        paymaster = bytes.fromhex(_address_body(fields["paymaster"]))
+        paymaster_and_data = (
+            paymaster
+            + _userop_uint(
+                fields, "paymasterverificationgaslimit", "paymasterVerificationGasLimit"
+            ).to_bytes(16, "big")
+            + _userop_uint(
+                fields, "paymasterpostopgaslimit", "paymasterPostOpGasLimit"
+            ).to_bytes(16, "big")
+            + _userop_bytes(fields, "paymasterdata")
+        )
+
+    return {
+        "initCode": init_code,
+        "accountGasLimits": account_gas_limits,
+        "preVerificationGas": _userop_uint(
+            fields, "preverificationgas", "preVerificationGas"
+        ),
+        "gasFees": gas_fees,
+        "paymasterAndData": paymaster_and_data,
+    }
+
+
+def eth_userop_hash(
+    user_op: Annotated[
+        dict[str, Any],
+        Field(
+            description="The ERC-4337 user operation as JSON, in the shape a "
+            "bundler speaks. v0.7/v0.8 accept either the packed form "
+            "(accountGasLimits/gasFees/initCode/paymasterAndData) or the unpacked "
+            "eth_sendUserOperation form (factory+factoryData, "
+            "verificationGasLimit+callGasLimit, maxPriorityFeePerGas+maxFeePerGas, "
+            "paymaster+paymasterVerificationGasLimit+paymasterPostOpGasLimit+"
+            "paymasterData). camelCase and snake_case keys are both understood; "
+            "`signature` is ignored, being what signs this hash. A stringified "
+            "JSON object is accepted."
+        ),
+    ],
+    entry_point: Annotated[
+        str,
+        Field(
+            description="The EntryPoint contract address the operation is sent to "
+            "— part of the hash, so the operation cannot be replayed against a "
+            "different one. Also selects the version when `version` is 'auto'."
+        ),
+    ],
+    chain_id: Annotated[
+        int | str,
+        Field(
+            description="The chain id the operation is valid on (int, decimal "
+            "string, or 0x-hex); part of the hash."
+        ),
+    ],
+    version: Annotated[
+        Literal["auto", "0.6", "0.7", "0.8"],
+        Field(
+            description="EntryPoint version, which decides the hashing rule. "
+            "'auto' reads it off a canonical EntryPoint address."
+        ),
+    ] = "auto",
+) -> dict:
+    """Compute the ERC-4337 userOpHash: an operation's id and signing digest.
+
+    The hash binds the operation to `entry_point` and `chain_id`, so the same
+    operation cannot be replayed against another EntryPoint or another chain.
+    `version` decides the rule and defaults to reading it off the canonical
+    EntryPoint address (0.6 0x5FF1…2789, 0.7 0x0000000071727De2…da032, 0.8
+    0x4337084d…f108, the same on every chain); pass it explicitly for a custom
+    deployment. v0.6 encodes six separate gas fields; v0.7 packs
+    verificationGasLimit/callGasLimit and maxPriorityFeePerGas/maxFeePerGas into
+    one word each (16 bytes apiece, high half first); v0.8 hashes that same
+    packed struct as EIP-712 typed data. The unpacked eth_sendUserOperation JSON
+    is accepted for v0.7/v0.8 and packed here, which is the fiddly half.
+    Returns {version, entry_point, chain_id, user_op_hash} plus the intermediate
+    values — `op_hash` for 0.6/0.7, `domain_separator` and `struct_hash` for
+    0.8 — and `packed` (the words that were hashed) for 0.7/0.8. `signature` is
+    never read: it signs this hash, so it cannot be part of it.
+
+    Example: eth_userop_hash(user_op, "0x0000000071727De22E5E9d8BAf0edAc6f37da032",
+    1) -> version="0.7", user_op_hash="0x…".
+    """
+    spec = json.loads(user_op) if isinstance(user_op, str) else user_op
+    if not isinstance(spec, dict):
+        raise ValueError("`user_op` must be a user operation object")
+    fields = _normalized_keys(spec)
+    entry = _address_body(entry_point)
+    chain = _eip712_parse_int(chain_id)
+    if chain < 0:
+        raise ValueError(f"`chain_id` must not be negative: {chain}")
+
+    resolved: str = version
+    if version == "auto":
+        known = _ENTRY_POINT_VERSIONS.get(entry.lower())
+        if known is None:
+            raise ValueError(
+                f"0x{entry} is not a canonical EntryPoint, so its version cannot "
+                f"be read off the address; pass `version` explicitly. Canonical: "
+                + ", ".join(f"v{v} at {a}" for v, a in _ENTRY_POINTS.items())
+            )
+        resolved = known
+
+    result: dict[str, Any] = {
+        "version": resolved,
+        "entry_point": _eip55(entry.lower()),
+        "chain_id": str(chain),
+    }
+    declared = _ENTRY_POINT_VERSIONS.get(entry.lower())
+    if declared is not None and declared != resolved:
+        result["reason"] = (
+            f"{result['entry_point']} is the canonical v{declared} EntryPoint, but "
+            f"version={resolved} was requested; the hash will not be the one that "
+            f"EntryPoint computes"
+        )
+
+    sender = _eip55(_address_body(_userop_field(fields, "sender", "sender")).lower())
+    nonce = _userop_uint(fields, "nonce", "nonce")
+
+    if resolved == "0.6":
+        op_hash = _keccak256(
+            _abi_enc_tuple(
+                ["address", "uint256", "bytes32", "bytes32"]
+                + ["uint256"] * 5
+                + ["bytes32"],
+                [
+                    sender,
+                    nonce,
+                    _hex_hash(_userop_bytes(fields, "initcode")),
+                    _hex_hash(_userop_bytes(fields, "calldata")),
+                    _userop_uint(fields, "callgaslimit", "callGasLimit"),
+                    _userop_uint(
+                        fields, "verificationgaslimit", "verificationGasLimit"
+                    ),
+                    _userop_uint(fields, "preverificationgas", "preVerificationGas"),
+                    _userop_uint(fields, "maxfeepergas", "maxFeePerGas"),
+                    _userop_uint(
+                        fields, "maxpriorityfeepergas", "maxPriorityFeePerGas"
+                    ),
+                    _hex_hash(_userop_bytes(fields, "paymasteranddata")),
+                ],
+            )
+        )
+        digest = _keccak256(
+            _abi_enc_tuple(
+                ["bytes32", "address", "uint256"],
+                ["0x" + op_hash.hex(), "0x" + entry, chain],
+            )
+        )
+        result["user_op_hash"] = "0x" + digest.hex()
+        result["op_hash"] = "0x" + op_hash.hex()
+        return result
+
+    if resolved not in ("0.7", "0.8"):
+        raise ValueError(
+            f"unknown EntryPoint version {resolved!r}; expected '0.6', '0.7', or '0.8'"
+        )
+
+    packed = _packed_userop(fields)
+    call_data = _userop_bytes(fields, "calldata")
+    members = [
+        sender,
+        nonce,
+        _hex_hash(packed["initCode"]),
+        _hex_hash(call_data),
+        "0x" + packed["accountGasLimits"].hex(),
+        packed["preVerificationGas"],
+        "0x" + packed["gasFees"].hex(),
+        _hex_hash(packed["paymasterAndData"]),
+    ]
+    member_types = [
+        "address",
+        "uint256",
+        "bytes32",
+        "bytes32",
+        "bytes32",
+        "uint256",
+        "bytes32",
+        "bytes32",
+    ]
+
+    if resolved == "0.7":
+        op_hash = _keccak256(_abi_enc_tuple(member_types, members))
+        digest = _keccak256(
+            _abi_enc_tuple(
+                ["bytes32", "address", "uint256"],
+                ["0x" + op_hash.hex(), "0x" + entry, chain],
+            )
+        )
+        result["user_op_hash"] = "0x" + digest.hex()
+        result["op_hash"] = "0x" + op_hash.hex()
+    else:  # 0.8 — the same members, hashed as EIP-712 typed data
+        type_hash = _keccak256(_USEROP_TYPE.encode("ascii"))
+        struct_hash = _keccak256(
+            _abi_enc_tuple(
+                ["bytes32"] + member_types, ["0x" + type_hash.hex()] + members
+            )
+        )
+        name, dom_version = _USEROP_DOMAIN
+        domain_separator = _keccak256(
+            _abi_enc_tuple(
+                ["bytes32", "bytes32", "bytes32", "uint256", "address"],
+                [
+                    "0x" + _keccak256(_USEROP_DOMAIN_TYPE.encode("ascii")).hex(),
+                    _hex_hash(name.encode("utf-8")),
+                    _hex_hash(dom_version.encode("utf-8")),
+                    chain,
+                    "0x" + entry,
+                ],
+            )
+        )
+        digest = _keccak256(b"\x19\x01" + domain_separator + struct_hash)
+        result["user_op_hash"] = "0x" + digest.hex()
+        result["domain_separator"] = "0x" + domain_separator.hex()
+        result["struct_hash"] = "0x" + struct_hash.hex()
+
+    result["packed"] = {
+        "initCode": "0x" + packed["initCode"].hex(),
+        "accountGasLimits": "0x" + packed["accountGasLimits"].hex(),
+        "preVerificationGas": str(packed["preVerificationGas"]),
+        "gasFees": "0x" + packed["gasFees"].hex(),
+        "paymasterAndData": "0x" + packed["paymasterAndData"].hex(),
+    }
+    return result
+
+
 # --- storage-slot layout (§1.15.4) ---------------------------------------------
 def _storage_encode_key(value: Any, key_type: str) -> bytes:
     """Encode a mapping key for slot derivation.
@@ -3069,6 +3479,7 @@ def register(mcp) -> None:
     mcp.tool()(eth_log_decode)
     mcp.tool()(eth_revert_decode)
     mcp.tool()(eth_bytecode)
+    mcp.tool()(eth_userop_hash)
     mcp.tool()(eth_storage_slot)
     mcp.tool()(eth_eoa_address)
     mcp.tool()(eth_contract_address)

@@ -778,10 +778,42 @@ Checkbox legend:  [ ] not started   [~] in progress   [x] done
                      20.1's _parse_param. NOT done: widening eth_calldata /
                      eth_log_decode / eth_revert_decode to accept a dict
                      `signature` — a separate, visible API change.
-    [ ] 20.9.  eth_userop_hash  (+ EIP-7702 authorization hash)
+    [x] 20.9.  eth_userop_hash(user_op req, entry_point req, chain_id req,
+               version opt=auto)  (+ EIP-7702 as eth_hash kind=eip7702)
                desc: ERC-4337 userOpHash; 7702 tuple 0x05 || rlp([chain_id,
                      address, nonce]). Structured keccak over existing codecs.
                gate: ethereum
+               7702 went into eth_hash rather than a third hashing tool: its
+                     `data` is already polymorphic (a JSON object for eip712), so
+                     kind=eip7702 + {chainId, address, nonce} needed no new
+                     surface. ret adds `preimage`. chainId 0 is a VALUE (valid on
+                     every chain), not a missing field; the 0x05 MAGIC is what
+                     keeps a signed authorization off the transaction types.
+               version: 0.6 (six separate gas fields) | 0.7 (PackedUserOperation:
+                     verificationGasLimit||callGasLimit and maxPriorityFeePerGas
+                     ||maxFeePerGas as 16-byte halves, HIGH half first) | 0.8
+                     (same packed struct, hashed as EIP-712 under domain
+                     {ERC4337, 1, chainId, entryPoint}). auto reads it off the
+                     canonical EntryPoint address — deterministic deployment, so
+                     the same three addresses on every chain; a non-canonical
+                     address RAISES asking for an explicit version rather than
+                     guessing, and an explicit version contradicting a canonical
+                     address is soft ({reason}, as in 20.1).
+               packing: v0.7/0.8 accept EITHER the packed form or the unpacked
+                     eth_sendUserOperation JSON (factory+factoryData,
+                     paymaster+2 gas limits+paymasterData) and do the packing —
+                     that packing is the error-prone half and the reason this
+                     tool exists. `packed` reports the words that were hashed.
+               ret: {version, entry_point, chain_id, user_op_hash} + op_hash
+                     (0.6/0.7) | domain_separator+struct_hash (0.8) + packed.
+                     `signature` is never read — it signs this hash.
+               keys: camelCase AND snake_case both understood (_normalized_keys),
+                     since a silent miss here is a wrong hash, not an error.
+               verified: every test vector was read out of the DEPLOYED
+                     EntryPoint via eth_call getUserOpHash on mainnet (0.6, 0.7,
+                     0.8, plus a 0.7 op with a factory and a paymaster), not
+                     transcribed from a spec. v0.8 is additionally rebuilt
+                     through eth_hash's generic EIP-712 engine.
     [ ] 20.10. + ens_namehash (10.7): extras
                desc: DNS wire-format name encoding (wildcard / CCIP-read
                      resolvers) and the addr.reverse node.

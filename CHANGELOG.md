@@ -8,6 +8,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `eth_userop_hash` — compute an ERC-4337 user operation's `userOpHash`: its id
+  in the mempool, and the digest the account's signature covers. The hash binds
+  the operation to the EntryPoint address and the chain id, so it cannot be
+  replayed against either a different EntryPoint or a different chain — and the
+  three live EntryPoint versions compute it differently enough that guessing is
+  not an option. v0.6 encodes six separate gas fields; v0.7 introduced
+  `PackedUserOperation`, where verificationGasLimit/callGasLimit share one word
+  and maxPriorityFeePerGas/maxFeePerGas share another, 16 bytes apiece with the
+  **high half first**; v0.8 hashes that same packed struct as EIP-712 typed data
+  under the domain `{name: "ERC4337", version: "1", chainId, verifyingContract}`.
+  The version is read off the canonical EntryPoint address by default — the
+  contract is deployed deterministically, so the same three addresses appear on
+  every chain — and a non-canonical address asks for an explicit `version`
+  instead of guessing. For v0.7/v0.8 you may hand it either the packed struct or
+  the *unpacked* `eth_sendUserOperation` JSON a bundler actually speaks
+  (`factory` + `factoryData`, `paymaster` + its two gas limits + `paymasterData`,
+  the separate gas fields) and it does the packing, which is the error-prone
+  half; `packed` reports the exact words that were hashed, and `op_hash` (0.6/0.7)
+  or `domain_separator` + `struct_hash` (0.8) show the intermediate step.
+  `signature` is the one field never read — it signs this hash, so it cannot be
+  inside it. camelCase and snake_case keys are both understood, because a key
+  that silently misses here yields a wrong hash rather than an error. Every test
+  vector was read out of the *deployed* EntryPoint by calling its own
+  `getUserOpHash` on mainnet, not transcribed from a specification, and the v0.8
+  path is additionally rebuilt through `eth_hash`'s generic EIP-712 engine so two
+  independent implementations have to agree. Adds no dependency; still the
+  `ethereum` extra.
 - `eth_bytecode` — read deployed EVM bytecode three ways: `disassemble` it into
   instructions, scrape the function `selectors` out of its dispatcher, or parse
   the trailing solc CBOR `metadata`. All three rest on one property — bytecode
@@ -220,6 +247,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the standard Hardhat/Anvil dev accounts.
 
 ### Changed
+- `eth_hash` gained `kind=eip7702`, the delegation authorization an EOA signs to
+  point itself at contract code. `data` is the tuple `{chainId, address, nonce}`
+  and the result carries the `preimage` alongside the hash —
+  `0x05 || rlp([chain_id, address, nonce])`, where the `0x05` MAGIC is what keeps
+  a signed authorization from ever being replayable as a transaction, and back.
+  A `chainId` of 0 is a value rather than an omission: it authorizes the
+  delegation on *every* chain. It reuses the existing RLP codec, so there is one
+  encoder behind both this and `eth_tx_codec`. It went here rather than into a
+  third hashing tool because `eth_hash`'s `data` was already polymorphic for
+  `eip712`, and an authorization is exactly "an Ethereum hash of kind X".
 - `eth_storage_slot` now knows the well-known constant layouts, not just the
   mapping and array formulas: `eip1967` (the proxy slots — `implementation`,
   `admin`, `beacon`, `rollback`), `eip1822` (the UUPS `proxiableUUID`),
