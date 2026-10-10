@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-10
+
+### Fixed
+- Cap the `mcp` SDK below 2.0. mcp 2.x renamed `FastMCP` to `MCPServer`, so a
+  fresh install of 0.4.0 that resolved mcp 2.x crashed at startup with
+  `ModuleNotFoundError: No module named 'mcp.server.fastmcp'`.
+
+## [0.4.0] - 2026-07-11
+
 ### Added
 - `id_generate` — generate one or more identifiers: a UUID (`version` 1, 4, 5 or
   7), a ULID, or a nanoid. Entirely stdlib, so the `ids` extra stays empty —
