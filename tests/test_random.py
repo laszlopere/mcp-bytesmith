@@ -159,7 +159,7 @@ def test_unknown_kind_rejected():
 # --- app wiring ----------------------------------------------------------------
 def test_registered_with_kind_enum():
     tool = next(t for t in asyncio.run(mcp.list_tools()) if t.name == "random")
-    kinds = tool.inputSchema["properties"]["kind"]["enum"]
+    kinds = tool.input_schema["properties"]["kind"]["enum"]
     assert set(kinds) == {"bytes", "hex", "urlsafe", "token", "passphrase"}
 
 
@@ -168,7 +168,7 @@ def test_callable_through_app():
         return await mcp.call_tool("random", {"kind": "hex", "nbytes": 4})
 
     result = asyncio.run(go())
-    contents = result[0] if isinstance(result, tuple) else result
+    contents = result.content
     payload = _json.loads(contents[0].text)
     assert payload["kind"] == "hex"
     assert payload["entropy_bits"] == 32

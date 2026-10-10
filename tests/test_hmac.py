@@ -124,7 +124,7 @@ def test_bad_hex_input_raises():
 # --- app registration / schema -------------------------------------------------
 def test_registered_with_crypto_only_algorithms():
     tool = next(t for t in asyncio.run(mcp.list_tools()) if t.name == "hmac")
-    algos = tool.inputSchema["properties"]["algorithm"]["enum"]
+    algos = tool.input_schema["properties"]["algorithm"]["enum"]
     assert "sha256" in algos and "blake2b" in algos
     assert "crc32" not in algos and "shake_128" not in algos and "xxh64" not in algos
     assert len(algos) == 10
@@ -135,6 +135,6 @@ def test_callable_through_app():
         return await mcp.call_tool("hmac", {"data": "message", "key": "secret"})
 
     result = asyncio.run(go())
-    contents = result[0] if isinstance(result, tuple) else result
+    contents = result.content
     payload = json.loads(contents[0].text)
     assert payload["mac"] == ref.new(b"secret", b"message", "sha256").hexdigest()

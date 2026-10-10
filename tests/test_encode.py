@@ -258,7 +258,7 @@ def test_return_shape():
 # --- app registration / schema -------------------------------------------------
 def test_registered_with_enum_schema():
     tool = next(t for t in asyncio.run(mcp.list_tools()) if t.name == "encode")
-    schemes = tool.inputSchema["properties"]["scheme"]["enum"]
+    schemes = tool.input_schema["properties"]["scheme"]["enum"]
     assert "base64" in schemes and "bech32m" in schemes and "hexdump" in schemes
     assert len(schemes) == 20
 
@@ -268,6 +268,6 @@ def test_callable_through_app():
         return await mcp.call_tool("encode", {"data": "foobar", "scheme": "base64"})
 
     result = asyncio.run(go())
-    contents = result[0] if isinstance(result, tuple) else result
+    contents = result.content
     payload = json.loads(contents[0].text)
     assert payload["encoded"] == "Zm9vYmFy"

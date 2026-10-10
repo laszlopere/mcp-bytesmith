@@ -158,6 +158,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the `ethereum` extra.
 
 ### Changed
+- Runs on the MCP Python SDK 2.x (`mcp>=2.3.0,<3`), which replaced `FastMCP`
+  with `MCPServer`; the mcp<2 cap is gone. Behaviour over stdio is unchanged:
+  mangled `arguments` are still repaired, validation errors still name the
+  field, and a tool's own error message still reaches the model (MCPServer
+  alone would hide it as an unexpected crash). `initialize` now reports the
+  package version as `serverInfo.version` instead of the SDK's.
 - `eth_hash` gained `kind=eip7702`, the delegation authorization an EOA signs to
   point itself at contract code. `data` is the tuple `{chainId, address, nonce}`
   and the result carries the `preimage` alongside the hash —

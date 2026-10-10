@@ -345,15 +345,15 @@ def test_registered_and_callable_through_app():
         )
 
     result = asyncio.run(go())
-    contents = result[0] if isinstance(result, tuple) else result
+    contents = result.content
     payload = json.loads(contents[0].text)
     assert payload["user_op_hash"] == HASH_07
 
 
 def test_registered_with_expected_schema():
     tool = next(t for t in asyncio.run(mcp.list_tools()) if t.name == "eth_userop_hash")
-    assert tool.inputSchema["required"] == ["user_op", "entry_point", "chain_id"]
-    assert tool.inputSchema["properties"]["version"]["enum"] == [
+    assert tool.input_schema["required"] == ["user_op", "entry_point", "chain_id"]
+    assert tool.input_schema["properties"]["version"]["enum"] == [
         "auto",
         "0.6",
         "0.7",

@@ -296,7 +296,7 @@ def test_hkdf_rfc_length_ceiling_is_enforced_by_the_primitive():
 # --- app wiring ------------------------------------------------------------------
 def test_registered_with_kdf_enum():
     tool = next(t for t in asyncio.run(mcp.list_tools()) if t.name == "derive_key")
-    assert set(tool.inputSchema["properties"]["kdf"]["enum"]) == set(KDFS)
+    assert set(tool.input_schema["properties"]["kdf"]["enum"]) == set(KDFS)
 
 
 def test_callable_through_app():
@@ -307,7 +307,7 @@ def test_callable_through_app():
         )
 
     result = asyncio.run(go())
-    contents = result[0] if isinstance(result, tuple) else result
+    contents = result.content
     payload = json.loads(contents[0].text)
     assert payload["kdf"] == "hkdf"
     assert len(bytes.fromhex(payload["key"])) == 16

@@ -399,7 +399,7 @@ def test_registered_and_callable_through_app():
         )
 
     result = asyncio.run(go())
-    contents = result[0] if isinstance(result, tuple) else result
+    contents = result.content
     payload = json.loads(contents[0].text)
     assert payload["args"][0]["name"] == "from"
     assert payload["args"][0]["value"] == VITALIK
@@ -408,7 +408,7 @@ def test_registered_and_callable_through_app():
 
 def test_registered_with_expected_schema():
     tool = next(t for t in asyncio.run(mcp.list_tools()) if t.name == "eth_log_decode")
-    schema = tool.inputSchema
+    schema = tool.input_schema
     assert schema["properties"]["topics"]["type"] == "array"
     assert set(schema["required"]) == {"signature", "topics"}
     assert schema["properties"]["anonymous"]["default"] is False

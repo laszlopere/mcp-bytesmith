@@ -33,7 +33,6 @@ from mcp.shared.message import SessionMessage
 from mcp.types import (
     LATEST_PROTOCOL_VERSION,
     PARSE_ERROR,
-    JSONRPCMessage,
     JSONRPCRequest,
 )
 
@@ -86,13 +85,13 @@ def _call_message(arguments) -> SessionMessage:
         method="tools/call",
         params={"name": "num_convert", "arguments": arguments},
     )
-    return SessionMessage(message=JSONRPCMessage(req))
+    return SessionMessage(message=req)
 
 
 def test_message_with_string_arguments_is_repaired_and_forwarded():
     out = process_incoming(_call_message("{'value': '255',}"))
     assert out.reply is None
-    assert out.forward.message.root.params["arguments"] == {"value": "255"}
+    assert out.forward.message.params["arguments"] == {"value": "255"}
 
 
 def test_message_with_dict_arguments_is_forwarded_untouched():
@@ -104,7 +103,7 @@ def test_message_with_dict_arguments_is_forwarded_untouched():
 
 def test_non_tools_call_message_is_forwarded_untouched():
     req = JSONRPCRequest(jsonrpc="2.0", id=1, method="tools/list", params={})
-    msg = SessionMessage(message=JSONRPCMessage(req))
+    msg = SessionMessage(message=req)
     out = process_incoming(msg)
     assert out.reply is None
     assert out.forward is msg
@@ -113,7 +112,7 @@ def test_non_tools_call_message_is_forwarded_untouched():
 def test_unparseable_string_arguments_yield_a_parse_error_reply():
     out = process_incoming(_call_message("{bad json"))
     assert out.forward is None
-    error = out.reply.message.root.error
+    error = out.reply.message.error
     assert error.code == PARSE_ERROR
     assert error.message.lower().count("json") >= 1
     assert "object" in error.message  # tells the model to send an object

@@ -86,7 +86,7 @@ def test_action_param_exposes_enum_in_schema():
     tool = next(
         t for t in asyncio.run(mcp.list_tools()) if t.name == "eth_address_case"
     )
-    action = tool.inputSchema["properties"]["action"]
+    action = tool.input_schema["properties"]["action"]
     assert action.get("enum") == ["encode", "verify"]
 
 
@@ -101,6 +101,6 @@ def test_registered_and_callable_through_app():
         )
 
     result = asyncio.run(go())
-    contents = result[0] if isinstance(result, tuple) else result
+    contents = result.content
     payload = json.loads(contents[0].text)
     assert payload["address"] == CHECKSUMMED[0]

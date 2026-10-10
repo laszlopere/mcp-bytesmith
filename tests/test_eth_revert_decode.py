@@ -292,7 +292,7 @@ def test_registered_and_callable_through_app():
         return await mcp.call_tool("eth_revert_decode", {"data": ERROR_DATA})
 
     result = asyncio.run(go())
-    contents = result[0] if isinstance(result, tuple) else result
+    contents = result.content
     payload = json.loads(contents[0].text)
     assert payload["kind"] == "error"
     assert payload["reason"] == ERC20_MESSAGE
@@ -302,6 +302,6 @@ def test_registered_with_expected_schema():
     tool = next(
         t for t in asyncio.run(mcp.list_tools()) if t.name == "eth_revert_decode"
     )
-    assert tool.inputSchema["required"] == ["data"]
-    assert "signature" in tool.inputSchema["properties"]
+    assert tool.input_schema["required"] == ["data"]
+    assert "signature" in tool.input_schema["properties"]
     assert tool.description

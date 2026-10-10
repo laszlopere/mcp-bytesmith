@@ -217,6 +217,6 @@ def test_registered_and_callable_through_app():
         )
 
     result = asyncio.run(go())
-    contents = result[0] if isinstance(result, tuple) else result
+    contents = result.content
     payload = json.loads(contents[0].text)
     assert payload["encoded"] == "0xc88363617483646f67"

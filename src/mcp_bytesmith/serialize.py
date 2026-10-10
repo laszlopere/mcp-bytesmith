@@ -867,5 +867,5 @@ def serialize_codec(
 
 
 def register(mcp) -> None:
-    """Register the serialize toolset's tools against the FastMCP app."""
+    """Register the serialize toolset's tools against the MCPServer app."""
     mcp.tool()(serialize_codec)

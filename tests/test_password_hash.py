@@ -311,7 +311,7 @@ def test_malformed_encoded_raises(encoded):
 # --- app wiring ----------------------------------------------------------------
 def test_registered_with_action_and_scheme_enums():
     tool = next(t for t in asyncio.run(mcp.list_tools()) if t.name == "password_hash")
-    props = tool.inputSchema["properties"]
+    props = tool.input_schema["properties"]
     assert set(props["action"]["enum"]) == {"hash", "verify"}
     # `scheme` is an optional enum, so pydantic nests it under anyOf.
     schemes = {s for branch in props["scheme"]["anyOf"] for s in branch.get("enum", [])}
@@ -328,6 +328,6 @@ def test_callable_through_app():
         )
 
     result = asyncio.run(go())
-    contents = result[0] if isinstance(result, tuple) else result
+    contents = result.content
     payload = json.loads(contents[0].text)
     assert payload["valid"] is True and payload["scheme"] == "pbkdf2"

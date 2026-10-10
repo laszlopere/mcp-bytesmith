@@ -3469,7 +3469,7 @@ def ens_namehash(
 
 
 def register(mcp) -> None:
-    """Register the ethereum toolset's tools against the FastMCP app."""
+    """Register the ethereum toolset's tools against the MCPServer app."""
     mcp.tool()(eth_hash)
     mcp.tool()(eth_selector)
     mcp.tool()(rlp_codec)

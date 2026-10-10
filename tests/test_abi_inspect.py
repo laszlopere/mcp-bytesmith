@@ -384,7 +384,7 @@ def test_registered_and_callable_through_app():
         return await mcp.call_tool("abi_inspect", {"abi": ERC20_JSON})
 
     result = asyncio.run(go())
-    contents = result[0] if isinstance(result, tuple) else result
+    contents = result.content
     payload = json.loads(contents[0].text)
     assert payload["selectors"]["0xa9059cbb"] == "transfer(address,uint256)"
     assert payload["topics"][TRANSFER_TOPIC0] == "Transfer(address,address,uint256)"
@@ -392,5 +392,5 @@ def test_registered_and_callable_through_app():
 
 def test_registered_with_expected_schema():
     tool = next(t for t in asyncio.run(mcp.list_tools()) if t.name == "abi_inspect")
-    assert tool.inputSchema["required"] == ["abi"]
+    assert tool.input_schema["required"] == ["abi"]
     assert tool.description

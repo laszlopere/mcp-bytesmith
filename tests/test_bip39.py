@@ -300,6 +300,6 @@ def test_callable_through_app():
         return await mcp.call_tool("bip39", {"action": "to_seed", "mnemonic": ABANDON})
 
     result = asyncio.run(go())
-    contents = result[0] if isinstance(result, tuple) else result
+    contents = result.content
     payload = json.loads(contents[0].text)
     assert payload["seed"] == ABANDON_SEED_NO_PASSPHRASE

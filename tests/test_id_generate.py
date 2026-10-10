@@ -211,8 +211,8 @@ def test_unknown_kind_is_rejected():
 def test_tool_is_registered_with_a_schema():
     tool = next(t for t in asyncio.run(mcp.list_tools()) if t.name == "id_generate")
     assert tool.description and tool.description.strip()
-    assert "kind" in tool.inputSchema["properties"]
-    assert tool.inputSchema["required"] == ["kind"]
+    assert "kind" in tool.input_schema["properties"]
+    assert tool.input_schema["required"] == ["kind"]
 
 
 def test_invoke_through_the_app():
@@ -223,7 +223,7 @@ def test_invoke_through_the_app():
         )
 
     result = asyncio.run(go())
-    contents = result[0] if isinstance(result, tuple) else result
+    contents = result.content
     payload = _json.loads(contents[0].text)
     assert payload == {
         "kind": "uuid",

@@ -14,42 +14,54 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""FastMCP application singleton — all tools register against this `mcp` app.
+"""MCPServer application singleton — all tools register against this `mcp` app.
 
-Transport is stdio (FastMCP default), which is what Claude Code / Desktop launch
+Transport is stdio (the MCPServer default), which is what Claude Code / Desktop launch
 (TODO 4.4). No HTTP/SSE in the skeleton.
 """
 
 import platform
-from collections.abc import Sequence as AbcSequence
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.exceptions import ToolError
-from mcp.types import ContentBlock
+from mcp.server.mcpserver import Context, MCPServer
+from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
+from mcp.types import CallToolResult, InputRequiredResult
 from pydantic import ValidationError
 
 from mcp_bytesmith import __version__, core, eth, serialize
 from mcp_bytesmith.errors import format_validation_error
 
 
-class _BytesmithFastMCP(FastMCP):
-    """FastMCP that reshapes argument-validation errors for the model.
+class _BytesmithMCPServer(MCPServer):
+    """MCPServer that keeps tool-call errors readable for the model.
 
-    FastMCP wraps a failed pydantic argument validation as a ToolError whose
-    `__cause__` is the ValidationError. We catch that one case and re-raise with
-    a concise, field-naming message (errors.format_validation_error); the SDK
-    still returns it as an `isError` result. Tool-body failures (a tool's own
-    ValueError, etc.) carry a different cause or none, so they fall through
-    unchanged.
+    Two cases are rewritten; everything else falls through unchanged:
+
+    * MCPServer wraps a failed pydantic argument validation as a ToolError whose
+      `__cause__` is the ValidationError. We re-raise it with a concise,
+      field-naming message (errors.format_validation_error).
+    * Tools report bad input by raising ValueError. MCPServer treats any
+      non-ToolError from a tool body as a crash: it raises UnexpectedToolError,
+      whose message is only "Error executing tool <name>", and logs a traceback.
+      A ValueError here is deliberate, so we re-raise it as a ToolError that
+      keeps its text after that prefix.
+
+    The SDK still returns both as an `isError` result.
     """
 
     async def call_tool(
-        self, name: str, arguments: dict[str, Any]
-    ) -> AbcSequence[ContentBlock] | dict[str, Any]:
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        context: Context[Any, Any] | None = None,
+    ) -> CallToolResult | InputRequiredResult:
         try:
-            return await super().call_tool(name, arguments)
+            return await super().call_tool(name, arguments, context)
+        except UnexpectedToolError as exc:
+            if isinstance(exc.__cause__, ValueError):
+                raise ToolError(f"{exc}: {exc.__cause__}") from exc.__cause__
+            raise
         except ToolError as exc:
             if isinstance(exc.__cause__, ValidationError):
                 raise ToolError(
@@ -59,8 +71,9 @@ class _BytesmithFastMCP(FastMCP):
 
 
 # TODO 4.1 — the singleton app. Every tool registers here.
-mcp = _BytesmithFastMCP(
+mcp = _BytesmithMCPServer(
     "mcp-bytesmith",
+    version=__version__,
     instructions=(
         "Pure-Python, offline toolbox for byte/string encoding & decoding, hashing "
         "& HMAC, number/time conversion, Ethereum/EVM primitives, and structured "

@@ -171,7 +171,7 @@ def test_invalid_base64_input_raises():
 # --- app registration / schema -------------------------------------------------
 def test_registered_with_enum_schema():
     tool = next(t for t in asyncio.run(mcp.list_tools()) if t.name == "byte_order")
-    props = tool.inputSchema["properties"]
+    props = tool.input_schema["properties"]
     assert props["from_order"]["enum"] == ["host", "little", "big", "network"]
     assert props["to_order"]["enum"] == ["host", "little", "big", "network"]
 
@@ -184,6 +184,6 @@ def test_callable_through_app():
         )
 
     result = asyncio.run(go())
-    contents = result[0] if isinstance(result, tuple) else result
+    contents = result.content
     payload = json.loads(contents[0].text)
     assert payload["result"] == "78563412"

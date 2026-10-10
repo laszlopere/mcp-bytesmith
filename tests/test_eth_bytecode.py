@@ -353,12 +353,12 @@ def test_registered_and_callable_through_app():
         )
 
     result = asyncio.run(go())
-    contents = result[0] if isinstance(result, tuple) else result
+    contents = result.content
     payload = json.loads(contents[0].text)
     assert "0xa9059cbb" in payload["selectors"]
 
 
 def test_registered_with_expected_schema():
     tool = next(t for t in asyncio.run(mcp.list_tools()) if t.name == "eth_bytecode")
-    assert tool.inputSchema["required"] == ["action", "code"]
+    assert tool.input_schema["required"] == ["action", "code"]
     assert tool.description

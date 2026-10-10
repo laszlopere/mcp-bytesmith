@@ -184,7 +184,7 @@ def test_bad_hex_input_raises():
 # --- app registration / schema -------------------------------------------------
 def test_registered_with_enum_schema():
     tool = next(t for t in asyncio.run(mcp.list_tools()) if t.name == "hash")
-    algos = tool.inputSchema["properties"]["algorithm"]["enum"]
+    algos = tool.input_schema["properties"]["algorithm"]["enum"]
     assert "sha256" in algos and "crc32" in algos and "xxh64" in algos
     assert len(algos) == 23
 
@@ -194,6 +194,6 @@ def test_callable_through_app():
         return await mcp.call_tool("hash", {"data": "abc", "algorithm": "sha256"})
 
     result = asyncio.run(go())
-    contents = result[0] if isinstance(result, tuple) else result
+    contents = result.content
     payload = json.loads(contents[0].text)
     assert payload["digest"] == hashlib.sha256(b"abc").hexdigest()

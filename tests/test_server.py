@@ -14,7 +14,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""§7.3 — prove the `info` tool is wired into the FastMCP app, not merely
+"""§7.3 — prove the `info` tool is wired into the MCPServer app, not merely
 importable. Introspect and invoke it through the MCP layer (end-to-end)."""
 
 import asyncio
@@ -30,8 +30,8 @@ def _call_info_via_app() -> dict:
         return await mcp.call_tool("info", {})
 
     result = asyncio.run(go())
-    # call_tool returns a list of content blocks; the payload is JSON text.
-    contents = result[0] if isinstance(result, tuple) else result
+    # call_tool returns a CallToolResult; the payload is JSON text.
+    contents = result.content
     return json.loads(contents[0].text)
 
 
@@ -45,8 +45,8 @@ def test_tool_has_description_and_input_schema():
     # §7.3.2 — non-empty description (docstring) + generated input schema.
     tool = next(t for t in asyncio.run(mcp.list_tools()) if t.name == "info")
     assert tool.description and tool.description.strip()
-    assert isinstance(tool.inputSchema, dict)
-    assert tool.inputSchema.get("type") == "object"
+    assert isinstance(tool.input_schema, dict)
+    assert tool.input_schema.get("type") == "object"
 
 
 def test_invoke_through_app_matches_payload():
@@ -82,3 +82,22 @@ def test_info_survives_missing_sdk_metadata(monkeypatch):
     payload = _call_info_via_app()
     assert payload["status"] == "available"
     assert payload["mcp_sdk"] == "unknown"
+
+
+def test_tool_value_error_keeps_its_message():
+    # A tool's ValueError is deliberate feedback for the model, so its text must
+    # survive; MCPServer alone would reduce it to "Error executing tool <name>".
+    import pytest
+    from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
+
+    async def go():
+        return await mcp.call_tool(
+            "num_convert", {"value": "zz", "from_base": "dec", "to_base": "hex"}
+        )
+
+    with pytest.raises(ToolError) as info:
+        asyncio.run(go())
+    assert not isinstance(info.value, UnexpectedToolError)
+    assert (
+        str(info.value) == "Error executing tool num_convert: invalid dec integer: 'zz'"
+    )

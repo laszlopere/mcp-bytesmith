@@ -93,6 +93,6 @@ def test_callable_through_app():
         return await mcp.call_tool("ens_namehash", {"name": "foo.eth"})
 
     result = asyncio.run(go())
-    contents = result[0] if isinstance(result, tuple) else result
+    contents = result.content
     payload = json.loads(contents[0].text)
     assert payload["namehash"] == VECTORS["foo.eth"]

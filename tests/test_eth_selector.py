@@ -137,7 +137,7 @@ def test_unbalanced_parens_raises():
 # --- app registration / schema -------------------------------------------------
 def test_registered_with_enum_schema():
     tool = next(t for t in asyncio.run(mcp.list_tools()) if t.name == "eth_selector")
-    assert tool.inputSchema["properties"]["kind"]["enum"] == ["function", "event"]
+    assert tool.input_schema["properties"]["kind"]["enum"] == ["function", "event"]
 
 
 def test_callable_through_app():
@@ -147,6 +147,6 @@ def test_callable_through_app():
         )
 
     result = asyncio.run(go())
-    contents = result[0] if isinstance(result, tuple) else result
+    contents = result.content
     payload = json.loads(contents[0].text)
     assert payload["selector"] == "0xa9059cbb"

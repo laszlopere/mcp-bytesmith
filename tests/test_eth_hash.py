@@ -292,7 +292,7 @@ def test_available_false_when_crypto_missing(monkeypatch):
 # --- app registration / schema -------------------------------------------------
 def test_registered_with_enum_schema():
     tool = next(t for t in asyncio.run(mcp.list_tools()) if t.name == "eth_hash")
-    props = tool.inputSchema["properties"]
+    props = tool.input_schema["properties"]
     assert props["kind"]["enum"] == ["keccak256", "eip191", "eip712", "eip7702"]
     assert props["input_format"]["enum"] == ["text", "hex", "base64"]
     assert props["output_format"]["enum"] == ["hex", "base64"]
@@ -303,6 +303,6 @@ def test_callable_through_app():
         return await mcp.call_tool("eth_hash", {"kind": "keccak256", "data": "hello"})
 
     result = asyncio.run(go())
-    contents = result[0] if isinstance(result, tuple) else result
+    contents = result.content
     payload = json.loads(contents[0].text)
     assert payload["hash"] == KECCAK_HELLO

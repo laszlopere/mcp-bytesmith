@@ -11,7 +11,7 @@
 [![Last commit](https://img.shields.io/github/last-commit/laszlopere/mcp-bytesmith.svg)](https://github.com/laszlopere/mcp-bytesmith/commits)
 
 A pure-Python [Model Context Protocol](https://modelcontextprotocol.io) server,
-built on the official MCP SDK (FastMCP), exposing a toolbox of byte-wrangling
+built on the official MCP SDK (MCPServer), exposing a toolbox of byte-wrangling
 utilities — encoding, hashing, number crunching, and Ethereum primitives — all
 computed locally and for real, with no network calls or remote APIs.
 

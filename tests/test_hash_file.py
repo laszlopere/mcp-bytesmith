@@ -149,7 +149,7 @@ def test_directory_raises(tmp_path):
 # --- app registration / schema -------------------------------------------------
 def test_registered_without_shake():
     tool = next(t for t in asyncio.run(mcp.list_tools()) if t.name == "hash_file")
-    algos = tool.inputSchema["properties"]["algorithm"]["enum"]
+    algos = tool.input_schema["properties"]["algorithm"]["enum"]
     assert "sha256" in algos and "crc32" in algos
     assert "shake_128" not in algos and "shake_256" not in algos
     assert len(algos) == 21
@@ -160,6 +160,6 @@ def test_callable_through_app(sample):
         return await mcp.call_tool("hash_file", {"path": str(sample)})
 
     result = asyncio.run(go())
-    contents = result[0] if isinstance(result, tuple) else result
+    contents = result.content
     payload = json.loads(contents[0].text)
     assert payload["digest"] == hashlib.sha256(CONTENT).hexdigest()

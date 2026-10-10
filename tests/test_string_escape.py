@@ -135,7 +135,7 @@ def test_unknown_style_rejected():
 # --- app wiring ----------------------------------------------------------------
 def test_registered_with_style_enum():
     tool = next(t for t in asyncio.run(mcp.list_tools()) if t.name == "string_escape")
-    styles = tool.inputSchema["properties"]["style"]["enum"]
+    styles = tool.input_schema["properties"]["style"]["enum"]
     assert set(styles) == {
         "json",
         "js",
@@ -156,6 +156,6 @@ def test_callable_through_app():
         return await mcp.call_tool("string_escape", {"text": "a\nb", "style": "json"})
 
     result = asyncio.run(go())
-    contents = result[0] if isinstance(result, tuple) else result
+    contents = result.content
     payload = _json.loads(contents[0].text)
     assert payload == {"style": "json", "result": "a\\nb"}

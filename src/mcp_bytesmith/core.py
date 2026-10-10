@@ -3127,7 +3127,7 @@ def id_generate(
 
 
 def register(mcp) -> None:
-    """Register the always-on stdlib tools against the FastMCP app."""
+    """Register the always-on stdlib tools against the MCPServer app."""
     mcp.tool()(num_convert)
     mcp.tool()(byte_order)
     mcp.tool()(time_convert)

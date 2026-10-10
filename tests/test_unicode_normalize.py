@@ -104,7 +104,7 @@ def test_registered_with_form_enum():
     tool = next(
         t for t in asyncio.run(mcp.list_tools()) if t.name == "unicode_normalize"
     )
-    forms = tool.inputSchema["properties"]["form"]["enum"]
+    forms = tool.input_schema["properties"]["form"]["enum"]
     assert set(forms) == {"NFC", "NFD", "NFKC", "NFKD"}
 
 
@@ -113,7 +113,7 @@ def test_callable_through_app():
         return await mcp.call_tool("unicode_normalize", {"text": NFD_E, "form": "NFC"})
 
     result = asyncio.run(go())
-    contents = result[0] if isinstance(result, tuple) else result
+    contents = result.content
     payload = json.loads(contents[0].text)
     assert payload["result"] == NFC_E
     assert payload["changed"] is True

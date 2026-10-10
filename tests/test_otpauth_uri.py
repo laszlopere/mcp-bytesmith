@@ -225,7 +225,7 @@ def test_unknown_action_raises():
 
 def test_registered_with_action_enum():
     tool = next(t for t in asyncio.run(mcp.list_tools()) if t.name == "otpauth_uri")
-    actions = tool.inputSchema["properties"]["action"]["enum"]
+    actions = tool.input_schema["properties"]["action"]["enum"]
     assert set(actions) == {"build", "parse"}
 
 
@@ -237,6 +237,6 @@ def test_callable_through_app():
         )
 
     result = asyncio.run(go())
-    contents = result[0] if isinstance(result, tuple) else result
+    contents = result.content
     payload = json.loads(contents[0].text)
     assert payload["secret"] == "JBSWY3DPEHPK3PXP"
