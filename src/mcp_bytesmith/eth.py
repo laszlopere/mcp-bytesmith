@@ -1246,8 +1246,10 @@ def eth_log_decode(
 # require that never carried one.
 _ERROR_SIG = "Error(string)"
 _PANIC_SIG = "Panic(uint256)"
-_ERROR_SELECTOR = _keccak256(_ERROR_SIG.encode("ascii"))[:4]  # 0x08c379a0
-_PANIC_SELECTOR = _keccak256(_PANIC_SIG.encode("ascii"))[:4]  # 0x4e487b71
+# keccak256(sig)[:4], written out: computing them at import would need the
+# `ethereum` extra (pycryptodome) just to start the server.
+_ERROR_SELECTOR = bytes.fromhex("08c379a0")
+_PANIC_SELECTOR = bytes.fromhex("4e487b71")
 
 # Solidity's documented panic codes (docs.soliditylang.org, "Panic via assert").
 _PANIC_CODES = {

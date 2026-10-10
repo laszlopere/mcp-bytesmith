@@ -19,6 +19,8 @@ importable. Introspect and invoke it through the MCP layer (end-to-end)."""
 
 import asyncio
 import json
+import subprocess
+import sys
 
 from mcp_bytesmith.server import mcp
 
@@ -101,3 +103,35 @@ def test_tool_value_error_keeps_its_message():
     assert (
         str(info.value) == "Error executing tool num_convert: invalid dec integer: 'zz'"
     )
+
+
+# Top-level modules of every optional extra (`ethereum`, `crypto`, `encoding`,
+# `serialize`). idna is left out: it is also a dependency of the mcp SDK itself.
+_EXTRA_MODULES = (
+    "Crypto",
+    "xxhash",
+    "base58",
+    "base45",
+    "cbor2",
+    "msgpack",
+    "asn1crypto",
+    "bcrypt",
+    "argon2",
+)
+
+
+def test_server_imports_without_optional_extras():
+    # A base install (no extras) must still start: the extras only gate
+    # toolsets, so nothing may need them at import time.
+    code = (
+        "import sys\n"
+        f"for m in {_EXTRA_MODULES!r}:\n"
+        "    sys.modules[m] = None\n"
+        "import mcp_bytesmith.server as s\n"
+        "print(s._TOOLSETS)\n"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, timeout=60
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "[]"

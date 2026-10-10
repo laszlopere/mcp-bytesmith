@@ -17,8 +17,9 @@
 """TODO 20.3 — eth_revert_decode (revert data -> reason).
 
 The two built-in selectors are widely-known constants — Error(string) is
-0x08c379a0 and Panic(uint256) is 0x4e487b71 — and are asserted literally here
-while the module derives them by keccak, so the two must agree. The panic codes
+0x08c379a0 and Panic(uint256) is 0x4e487b71. The module writes them out (so the
+server starts without pycryptodome), and the test checks them against keccak so
+a typo cannot hide. The panic codes
 are Solidity's documented set; the Error vector carries OpenZeppelin's canonical
 ERC-20 balance message."""
 
@@ -30,6 +31,8 @@ import pytest
 pytest.importorskip("Crypto", reason="ethereum extra (pycryptodome) not installed")
 
 from mcp_bytesmith.eth import (  # noqa: E402
+    _ERROR_SELECTOR,
+    _PANIC_SELECTOR,
     abi_codec,
     eth_revert_decode,
     eth_selector,
@@ -70,6 +73,9 @@ def test_builtin_selectors_are_the_canonical_constants():
     assert eth_selector("Error(string)")["selector"] == ERROR_SELECTOR
     assert eth_selector("Panic(uint256)")["selector"] == PANIC_SELECTOR
     assert eth_selector(CUSTOM_SIG)["selector"] == CUSTOM_SELECTOR
+    # The module's written-out copies agree with keccak too.
+    assert "0x" + _ERROR_SELECTOR.hex() == eth_selector("Error(string)")["selector"]
+    assert "0x" + _PANIC_SELECTOR.hex() == eth_selector("Panic(uint256)")["selector"]
 
 
 # --- Error(string) -------------------------------------------------------------
