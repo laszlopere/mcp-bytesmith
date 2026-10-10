@@ -156,6 +156,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   It shares its ABI engine and value conventions with `abi_codec` (ints as
   decimal strings, addresses EIP-55 checksummed) and adds no dependency — still
   the `ethereum` extra.
+
+### Changed
+- `eth_hash` gained `kind=eip7702`, the delegation authorization an EOA signs to
+  point itself at contract code. `data` is the tuple `{chainId, address, nonce}`
+  and the result carries the `preimage` alongside the hash —
+  `0x05 || rlp([chain_id, address, nonce])`, where the `0x05` MAGIC is what keeps
+  a signed authorization from ever being replayable as a transaction, and back.
+  A `chainId` of 0 is a value rather than an omission: it authorizes the
+  delegation on *every* chain. It reuses the existing RLP codec, so there is one
+  encoder behind both this and `eth_tx_codec`. It went here rather than into a
+  third hashing tool because `eth_hash`'s `data` was already polymorphic for
+  `eip712`, and an authorization is exactly "an Ethereum hash of kind X".
+- `eth_storage_slot` now knows the well-known constant layouts, not just the
+  mapping and array formulas: `eip1967` (the proxy slots — `implementation`,
+  `admin`, `beacon`, `rollback`), `eip1822` (the UUPS `proxiableUUID`),
+  `erc7201` (namespaced storage) and `diamond` (EIP-2535). These are the slots
+  you need to read a proxy's implementation address out of a live contract, and
+  they are the ones easiest to get subtly wrong: EIP-1967 subtracts one from the
+  label hash — deliberately, to land outside keccak's image so no mapping entry
+  can ever collide with it — while EIP-1822 does not, and ERC-7201 hashes twice
+  and then clears the low byte to align the root to a 256-slot boundary. Each
+  constant is *derived* by keccak here rather than pasted from the EIP, so the
+  published hex and the code cannot drift apart; the tests pin both, including
+  ERC-7201's own `example.main` vector and the roots OpenZeppelin v5 documents.
+  The answer carries the `formula` it used, and the layouts compose: a
+  namespaced root feeds straight back in as another layout's `slot` to reach a
+  mapping declared inside that struct, and `index` steps to a later member of
+  it. An `erc7201:` annotation prefix on a namespace — how the id is actually
+  written in Solidity, as `@custom:storage-location` — is accepted and stripped,
+  and the common alternate spellings (`erc1967`, `uups`, `erc2535`, …) resolve
+  to the same layouts.
+
+## [0.4.1] - 2026-10-10
+
+### Fixed
+- Cap the `mcp` SDK below 2.0. mcp 2.x renamed `FastMCP` to `MCPServer`, so a
+  fresh install of 0.4.0 that resolved mcp 2.x crashed at startup with
+  `ModuleNotFoundError: No module named 'mcp.server.fastmcp'`.
+
+## [0.4.0] - 2026-07-11
+
+### Added
 - `id_generate` — generate one or more identifiers: a UUID (`version` 1, 4, 5 or
   7), a ULID, or a nanoid. Entirely stdlib, so the `ids` extra stays empty —
   `uuid` supplies v1/v4/v5, while v7 (RFC 9562 §5.7), ULID and nanoid are a few
@@ -245,37 +287,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   chain_code, address}` — the derived child key is returned, but the input seed
   is never echoed (§2.0.6). Key material verified against BIP-32 Test Vector 1
   and the standard Hardhat/Anvil dev accounts.
-
-### Changed
-- `eth_hash` gained `kind=eip7702`, the delegation authorization an EOA signs to
-  point itself at contract code. `data` is the tuple `{chainId, address, nonce}`
-  and the result carries the `preimage` alongside the hash —
-  `0x05 || rlp([chain_id, address, nonce])`, where the `0x05` MAGIC is what keeps
-  a signed authorization from ever being replayable as a transaction, and back.
-  A `chainId` of 0 is a value rather than an omission: it authorizes the
-  delegation on *every* chain. It reuses the existing RLP codec, so there is one
-  encoder behind both this and `eth_tx_codec`. It went here rather than into a
-  third hashing tool because `eth_hash`'s `data` was already polymorphic for
-  `eip712`, and an authorization is exactly "an Ethereum hash of kind X".
-- `eth_storage_slot` now knows the well-known constant layouts, not just the
-  mapping and array formulas: `eip1967` (the proxy slots — `implementation`,
-  `admin`, `beacon`, `rollback`), `eip1822` (the UUPS `proxiableUUID`),
-  `erc7201` (namespaced storage) and `diamond` (EIP-2535). These are the slots
-  you need to read a proxy's implementation address out of a live contract, and
-  they are the ones easiest to get subtly wrong: EIP-1967 subtracts one from the
-  label hash — deliberately, to land outside keccak's image so no mapping entry
-  can ever collide with it — while EIP-1822 does not, and ERC-7201 hashes twice
-  and then clears the low byte to align the root to a 256-slot boundary. Each
-  constant is *derived* by keccak here rather than pasted from the EIP, so the
-  published hex and the code cannot drift apart; the tests pin both, including
-  ERC-7201's own `example.main` vector and the roots OpenZeppelin v5 documents.
-  The answer carries the `formula` it used, and the layouts compose: a
-  namespaced root feeds straight back in as another layout's `slot` to reach a
-  mapping declared inside that struct, and `index` steps to a later member of
-  it. An `erc7201:` annotation prefix on a namespace — how the id is actually
-  written in Solidity, as `@custom:storage-location` — is accepted and stripped,
-  and the common alternate spellings (`erc1967`, `uups`, `erc2535`, …) resolve
-  to the same layouts.
 
 ## [0.3.0] - 2026-06-19
 
