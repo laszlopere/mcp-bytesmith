@@ -32,6 +32,7 @@ import hmac
 import json
 import secrets
 import unicodedata
+from collections.abc import Iterator
 from importlib.resources import files
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -3530,6 +3531,283 @@ def ens_namehash(
     }
 
 
+# --- secp256k1 sign / verify / recover / convert (§1.14.4-5) --------------------
+# A signature over a 32-byte digest is (r, s) plus a recovery id saying which
+# candidate point R was used, so the signer's public key can be rebuilt from the
+# signature alone (see _ecrecover). Three wire forms carry the same triple:
+# separate r/s/v fields, the 65-byte r || s || v that wallets return, and
+# EIP-2098's 64-byte r || (yParity << 255 | s), which only works because EIP-2
+# caps s at n/2 and so leaves s's top bit free. The nonce is RFC 6979
+# (deterministic, HMAC-SHA256), so a key and digest always give the same
+# signature — the one eth_account, ethers and viem produce. The curve math is
+# plain Python and not constant-time: fine for a local tool, not a hardened signer.
+_SECP_HALF_N = _SECP_N // 2
+
+
+def _rfc6979_nonces(d: int, z: int) -> Iterator[int]:
+    """RFC 6979 nonce candidates (HMAC-SHA256) for private scalar d and digest z."""
+    x = d.to_bytes(32, "big")
+    h = (z % _SECP_N).to_bytes(32, "big")  # bits2octets: qlen == hlen == 256
+
+    def mac(key: bytes, msg: bytes) -> bytes:
+        return hmac.new(key, msg, hashlib.sha256).digest()
+
+    v, k = b"\x01" * 32, b"\x00" * 32
+    k = mac(k, v + b"\x00" + x + h)
+    v = mac(k, v)
+    k = mac(k, v + b"\x01" + x + h)
+    v = mac(k, v)
+    while True:
+        v = mac(k, v)
+        t = int.from_bytes(v, "big")
+        if 0 < t < _SECP_N:
+            yield t
+        k = mac(k, v + b"\x00")  # candidate rejected: step the generator
+        v = mac(k, v)
+
+
+def _secp_sign(d: int, z: int) -> tuple[int, int, int]:
+    """Sign digest z with scalar d -> (r, s, y_parity), s normalized low (EIP-2)."""
+    for nonce in _rfc6979_nonces(d, z):
+        x, y = _secp_pubkey_point(nonce)
+        r = x % _SECP_N
+        if r == 0:
+            continue
+        s = pow(nonce, -1, _SECP_N) * (z + r * d) % _SECP_N
+        if s == 0:
+            continue
+        # x >= n would need recovery id 2/3, which no Ethereum v can express;
+        # the odds are ~2^-128, and the next nonce is just as valid.
+        if x >= _SECP_N:
+            continue
+        parity = y & 1
+        if s > _SECP_HALF_N:  # s -> n - s negates R, flipping its y parity
+            s, parity = _SECP_N - s, parity ^ 1
+        return r, s, parity
+    raise AssertionError("unreachable: the nonce generator is infinite")
+
+
+def _sig_message_hash(message_hash: str | None, action: str) -> int:
+    if message_hash is None:
+        raise ValueError(f"action={action} needs `message_hash`")
+    raw = _to_bytes(message_hash, "hex")
+    if len(raw) != 32:
+        raise ValueError(f"`message_hash` must be 32 bytes, got {len(raw)}")
+    return int.from_bytes(raw, "big")
+
+
+def _sig_parity(v: int) -> int:
+    """y parity from a v of 0/1 (yParity) or 27/28 (legacy personal_sign)."""
+    if v in (0, 1):
+        return v
+    if v in (27, 28):
+        return v - 27
+    raise ValueError(
+        f"unsupported v {v}: expected 0/1 or 27/28 (an EIP-155 transaction v "
+        "encodes the chain id; decode the transaction with eth_tx_codec instead)"
+    )
+
+
+def _sig_parse(signature: str | dict | None, action: str) -> tuple[int, int, int]:
+    """A signature in any of the three forms -> (r, s, y_parity)."""
+    if signature is None:
+        raise ValueError(f"action={action} needs `signature`")
+    if isinstance(signature, dict):
+        if "r" not in signature or "s" not in signature:
+            raise ValueError("a signature object needs `r` and `s`")
+        if "yParity" in signature:
+            parity = _eip712_parse_int(signature["yParity"])
+            if parity not in (0, 1):
+                raise ValueError(f"`yParity` must be 0 or 1, got {parity}")
+        elif "v" in signature:
+            parity = _sig_parity(_eip712_parse_int(signature["v"]))
+        else:
+            raise ValueError("a signature object needs `v` or `yParity`")
+        r = _eip712_parse_int(signature["r"])
+        s = _eip712_parse_int(signature["s"])
+    else:
+        raw = _to_bytes(signature, "hex")
+        if len(raw) == 65:
+            r = int.from_bytes(raw[:32], "big")
+            s = int.from_bytes(raw[32:64], "big")
+            parity = _sig_parity(raw[64])
+        elif len(raw) == 64:  # EIP-2098 compact
+            r = int.from_bytes(raw[:32], "big")
+            vs = int.from_bytes(raw[32:], "big")
+            parity, s = vs >> 255, vs & ((1 << 255) - 1)
+        else:
+            raise ValueError(
+                f"signature must be 65 bytes (r || s || v) or 64 bytes (EIP-2098), "
+                f"got {len(raw)}"
+            )
+    if not 0 < r < _SECP_N:
+        raise ValueError("signature r is out of range (0 < r < n)")
+    if not 0 < s < _SECP_N:
+        raise ValueError("signature s is out of range (0 < s < n)")
+    return r, s, parity
+
+
+def _sig_render(r: int, s: int, parity: int, fmt: str) -> str | dict:
+    """(r, s, y_parity) -> one wire form."""
+    if fmt == "packed65":
+        return (
+            "0x"
+            + (r.to_bytes(32, "big") + s.to_bytes(32, "big")).hex()
+            + (f"{27 + parity:02x}")
+        )
+    if fmt == "eip2098":
+        if s > _SECP_HALF_N:
+            raise ValueError(
+                "a high-s signature has no EIP-2098 form (its top bit holds yParity); "
+                "only low-s (EIP-2) signatures can be compacted"
+            )
+        return (
+            "0x"
+            + r.to_bytes(32, "big").hex()
+            + (parity << 255 | s).to_bytes(32, "big").hex()
+        )
+    if fmt == "rsv":
+        return {
+            "r": "0x" + r.to_bytes(32, "big").hex(),
+            "s": "0x" + s.to_bytes(32, "big").hex(),
+            "v": 27 + parity,
+            "yParity": parity,
+        }
+    raise ValueError(
+        f"unknown signature_format {fmt!r}; expected rsv, packed65, or eip2098"
+    )
+
+
+def eth_sign(
+    action: Annotated[
+        Literal["sign", "verify", "recover", "convert"],
+        Field(
+            description="'sign' a digest with the key in `private_key_file`; "
+            "'verify' a signature against an expected `address`; 'recover' the "
+            "signer address (ecrecover); 'convert' a signature between forms."
+        ),
+    ],
+    message_hash: Annotated[
+        str | None,
+        Field(
+            description="The 32-byte digest to sign or check, as hex (0x optional) "
+            "— signed exactly as given, with no prefix added. Required for sign, "
+            "verify, and recover."
+        ),
+    ] = None,
+    private_key_file: Annotated[
+        str | None,
+        Field(
+            description="action=sign only: path of a file holding the private key "
+            "as 64 hex digits (0x and surrounding whitespace optional) or as 32 "
+            "raw bytes; `~` is expanded. The server reads it itself, so the key "
+            "never appears in the call or the result, and no error quotes the "
+            "file's contents. There is deliberately no inline key argument."
+        ),
+    ] = None,
+    signature: Annotated[
+        str | dict | None,
+        Field(
+            description="For verify/recover/convert: a 65-byte r || s || v hex "
+            "string (v 27/28 or 0/1), a 64-byte EIP-2098 compact hex string, or "
+            "an object {r, s, v} / {r, s, yParity} (ints as int, decimal, or 0x-hex)."
+        ),
+    ] = None,
+    address: Annotated[
+        str | None,
+        Field(
+            description="action=verify: the expected signer's 20-byte address "
+            "(any casing)."
+        ),
+    ] = None,
+    signature_format: Annotated[
+        Literal["rsv", "packed65", "eip2098"],
+        Field(
+            description="action=convert: the form to produce — 'rsv' (object "
+            "{r, s, v, yParity}), 'packed65' (65-byte r || s || v, v=27/28), or "
+            "'eip2098' (64-byte compact; low-s signatures only). Default packed65."
+        ),
+    ] = "packed65",
+) -> dict:
+    """Sign, verify, ecrecover, or reformat a secp256k1 signature over a 32-byte hash.
+
+    This signs a raw digest — unlike the JSON-RPC `eth_sign`/`personal_sign`, it
+    adds no "\\x19Ethereum Signed Message" prefix. Hash a message first with
+    eth_hash (kind=eip191 for personal_sign, eip712 for typed data), or pass a
+    transaction's or user operation's signing hash.
+
+    action=sign (message_hash, private_key_file) -> {signature (65-byte, v=27/28),
+    r, s, v, yParity, eip2098, address}. The nonce is RFC 6979, so the result is
+    deterministic and matches eth_account/ethers; s is always low (EIP-2).
+    `address` is the signer's, to confirm the right key was used. The key is
+    never echoed.
+    action=verify (message_hash, signature, address) -> {valid, recovered, low_s};
+    a signature that recovers no key is soft: valid false plus `reason`.
+    action=recover (message_hash, signature) -> {address, low_s}.
+    action=convert (signature, signature_format) -> {format, result, low_s}.
+    `low_s` is false for a malleable high-s signature: the ecrecover precompile
+    accepts it, but Ethereum transactions and OpenZeppelin's ECDSA reject it.
+
+    Example: eth_sign("sign", message_hash="0x…32 bytes…",
+    private_key_file="~/keys/dev.key") -> {signature: "0x…1b", r, s, v: 27, …}.
+    """
+    if action == "sign":
+        if private_key_file is None:
+            raise ValueError("action=sign needs `private_key_file`")
+        z = _sig_message_hash(message_hash, action)
+        d = _private_key_from_file(private_key_file)
+        r, s, parity = _secp_sign(d, z)
+        rsv = _sig_render(r, s, parity, "rsv")
+        return {
+            "action": action,
+            "signature": _sig_render(r, s, parity, "packed65"),
+            **rsv,
+            "eip2098": _sig_render(r, s, parity, "eip2098"),
+            "address": _pubkey_address(_secp_pubkey_uncompressed(d)[1:]),
+        }
+    if action == "verify":
+        z = _sig_message_hash(message_hash, action)
+        r, s, parity = _sig_parse(signature, action)
+        if address is None:
+            raise ValueError("action=verify needs `address`")
+        expected = _address_body(address).lower()
+        try:
+            recovered = _ecrecover(z, r, s, parity).hex()
+        except ValueError as exc:
+            return {
+                "action": action,
+                "valid": False,
+                "recovered": None,
+                "low_s": s <= _SECP_HALF_N,
+                "reason": str(exc),
+            }
+        return {
+            "action": action,
+            "valid": recovered == expected,
+            "recovered": _eip55(recovered),
+            "low_s": s <= _SECP_HALF_N,
+        }
+    if action == "recover":
+        z = _sig_message_hash(message_hash, action)
+        r, s, parity = _sig_parse(signature, action)
+        return {
+            "action": action,
+            "address": _eip55(_ecrecover(z, r, s, parity).hex()),
+            "low_s": s <= _SECP_HALF_N,
+        }
+    if action == "convert":
+        r, s, parity = _sig_parse(signature, action)
+        return {
+            "action": action,
+            "format": signature_format,
+            "result": _sig_render(r, s, parity, signature_format),
+            "low_s": s <= _SECP_HALF_N,
+        }
+    raise ValueError(
+        f"unknown action {action!r}; expected sign, verify, recover, or convert"
+    )
+
+
 def register(mcp) -> None:
     """Register the ethereum toolset's tools against the MCPServer app."""
     mcp.tool()(eth_hash)
@@ -3550,3 +3828,4 @@ def register(mcp) -> None:
     mcp.tool()(eth_address_case)
     mcp.tool()(ens_namehash)
     mcp.tool()(bip32_derive)
+    mcp.tool()(eth_sign)

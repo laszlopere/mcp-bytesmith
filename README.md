@@ -61,8 +61,11 @@ EIP-137 ENS namehash/labelhash, `bip39` for BIP-39 mnemonic generation,
 validation, and seed derivation, `bip32_derive` for BIP-32/44 HD key and address
 derivation from a seed, `eth_eoa_address` for the address and public key behind a
 private key (passed inline, or read from a file so the key stays out of the
-conversation), and `eth_contract_address` for CREATE and CREATE2 deployment
-addresses. An always-available `info` tool reports which toolsets are active
+conversation), `eth_contract_address` for CREATE and CREATE2 deployment
+addresses, and `eth_sign` for secp256k1 signatures over a 32-byte hash — signing
+with a key the server reads from a file (there is no inline key argument), plus
+verifying, recovering the signer, and converting between r/s/v, 65-byte, and
+EIP-2098 compact forms. An always-available `info` tool reports which toolsets are active
 along with version information.
 
 An opt-in **serialization toolset** (enabled via the `serialize` extra) adds

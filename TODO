@@ -460,7 +460,7 @@ Checkbox legend:  [ ] not started   [~] in progress   [x] done
                gate: crypto
                algorithm: rsa-pss rsa-pkcs1 ecdsa ed25519
                action=sign -> {signature} | verify -> {valid:bool}  (soft)
-    [ ] 15.3.  eth_sign(action req, message_hash req, private_key opt,
+    [x] 15.3.  eth_sign(action req, message_hash req, private_key_file opt,
                signature opt, signature_format opt)     -> §1.14.4-5
                desc: Sign, verify, ecrecover, or reformat a secp256k1 signature over a hash.
                gate: ethereum

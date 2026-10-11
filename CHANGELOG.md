@@ -162,6 +162,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   holds the key as 64 hex digits (0x prefix and surrounding whitespace optional)
   or as the 32 raw bytes. No error quotes the file's contents — a near-miss key
   is still nearly the whole key — and files over 4 KiB are refused unread.
+- `eth_sign` — secp256k1 signatures over a 32-byte digest. `action=sign` takes
+  the key **only** as `private_key_file`, which the server reads itself; there
+  is deliberately no inline key argument, so a key never has to pass through the
+  conversation. The nonce is RFC 6979, so signing is deterministic and matches
+  eth_account/ethers byte for byte, and s is always low (EIP-2). It returns the
+  65-byte signature (v = 27/28), r/s/v/yParity, the EIP-2098 compact form, and
+  the signer's address so you can confirm the right key was used. The digest is
+  signed as given — no `\x19Ethereum Signed Message` prefix, unlike the JSON-RPC
+  `eth_sign` — so hash with `eth_hash` (eip191 or eip712) first. `verify` checks
+  a signature against an expected address (an unrecoverable signature is a soft
+  `valid: false`), `recover` is ecrecover, and `convert` moves a signature
+  between `rsv`, `packed65`, and `eip2098`. Every action accepts a signature in
+  any of the three forms and reports `low_s`, flagging the malleable high-s
+  twin that the ecrecover precompile accepts but transactions and
+  OpenZeppelin's ECDSA reject. EIP-155 transaction v values are refused with a
+  pointer to `eth_tx_codec`. Pure Python on the existing curve code — still the
+  `ethereum` extra.
 
 ### Changed
 - Runs on the MCP Python SDK 2.x (`mcp>=2.3.0,<3`), which replaced `FastMCP`
