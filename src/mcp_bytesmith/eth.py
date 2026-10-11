@@ -3179,9 +3179,10 @@ def bip32_derive(
 # --- transaction encode / decode (§1.14.7) -------------------------------------
 # A signed Ethereum tx is RLP. Legacy is a bare 9-item list [nonce, gasPrice,
 # gasLimit, to, value, data, v, r, s]; the typed envelopes (EIP-2930/1559/4844)
-# are `type_byte || rlp([...])`. encode serializes the (already-signed) fields a
-# caller supplies — it does NOT sign. decode parses the wire form back to fields
-# and recovers `from` via the signing hash + ecrecover.
+# are `type_byte || rlp([...])`. encode serializes the fields a caller supplies —
+# it does NOT sign, but reports the signing hash so eth_sign can. decode parses
+# the wire form back to fields and recovers `from` via the signing hash +
+# ecrecover.
 _TX_SIGNED_FIELDS: dict[int, list[str]] = {
     0: ["nonce", "gasPrice", "gasLimit", "to", "value", "data", "v", "r", "s"],
     1: [
@@ -3274,10 +3275,39 @@ def _tx_infer_type(fields: dict) -> int:
     return 0
 
 
+def _tx_legacy_chain_v(fields: dict) -> dict:
+    """Reconcile a legacy tx's `chainId` with its `v`, which carries it on the wire.
+
+    Unsigned (no r/s): v defaults to chainId, EIP-155's unsigned form. Signed: v
+    must encode that same chain id (chainId*2 + 35 + yParity).
+    """
+    if fields.get("chainId") is None:
+        return fields
+    chain_id = _eip712_parse_int(fields["chainId"])
+    v = _eip712_parse_int(fields["v"]) if fields.get("v") is not None else None
+    signed = any(_eip712_parse_int(fields.get(k) or 0) for k in ("r", "s"))
+    if not signed:
+        if v not in (None, chain_id):
+            raise ValueError(
+                f"unsigned legacy tx: v ({v}) must be absent or equal chainId "
+                f"({chain_id}), EIP-155's unsigned form"
+            )
+        return {**fields, "v": chain_id}
+    if v is None or v < 35 or (v - 35) // 2 != chain_id:
+        raise ValueError(
+            f"legacy v {v} does not encode chainId {chain_id}; an EIP-155 "
+            f"signature has v = chainId*2 + 35 + yParity ({chain_id * 2 + 35} or "
+            f"{chain_id * 2 + 36})"
+        )
+    return fields
+
+
 def _tx_encode(fields: dict) -> tuple[int, bytes]:
     tx_type = _tx_infer_type(fields)
     if tx_type not in _TX_SIGNED_FIELDS:
         raise ValueError(f"unsupported transaction type: {tx_type}")
+    if tx_type == 0:
+        fields = _tx_legacy_chain_v(fields)
     items = [_tx_rlp_item(n, fields.get(n)) for n in _TX_SIGNED_FIELDS[tx_type]]
     body = _rlp_encode(items)
     return tx_type, body if tx_type == 0 else bytes([tx_type]) + body
@@ -3324,6 +3354,13 @@ def _tx_signing_hash(tx_type: int, items: list) -> tuple[bytes, int | None, int 
     """Return (signing_hash, chain_id, recovery_id) for a decoded tx item list."""
     if tx_type == 0:
         v = _tx_leaf_int(items[6])
+        if not _tx_leaf_int(items[7]) and not _tx_leaf_int(items[8]):
+            # Unsigned. EIP-155's unsigned form carries the chain id in v with
+            # r = s = 0 (what ethers serializes, and what encode emits for a
+            # legacy `chainId`); v = 0 means a pre-EIP-155 tx.
+            chain_id = v or None
+            unsigned = items[:6] + [v, 0, 0] if v else items[:6]
+            return _keccak256(_rlp_encode(unsigned)), chain_id, None
         if v >= 35:  # EIP-155: v = chainId*2 + 35 + recovery_id
             chain_id, rec_id = (v - 35) // 2, (v - 35) % 2
             unsigned = items[:6] + [chain_id, 0, 0]
@@ -3387,6 +3424,7 @@ def _tx_decode(data: str) -> dict:
         "type": tx_type,
         "fields": fields,
         "hash": "0x" + _keccak256(raw).hex(),
+        "signing_hash": "0x" + sighash.hex(),
         "from": from_addr,
     }
 
@@ -3408,24 +3446,36 @@ def eth_tx_codec(
     fields: Annotated[
         dict | None,
         Field(
-            description="Already-signed tx fields object (required for "
-            "action=encode); does NOT sign. The type comes from a `type` key or is "
+            description="Tx fields object (required for action=encode); does NOT "
+            "sign. Omit v/yParity/r/s for an unsigned tx, whose `signing_hash` is "
+            "what to sign; a legacy tx's `chainId` makes it EIP-155 (it is carried "
+            "in v, so a signed legacy v must encode it). The type comes from a "
+            "`type` key or is "
             "inferred (maxFeePerGas->1559, blobVersionedHashes->4844, "
             "accessList->2930, else legacy). Numbers accept int/decimal/0x-hex; "
             "`to`/`data` are 0x-hex. A stringified JSON object is accepted."
         ),
     ] = None,
 ) -> dict:
-    """Serialize signed tx fields into a raw transaction, or decode a raw tx.
+    """Serialize tx fields into a raw transaction, or decode a raw tx.
 
-    action=encode (needs `fields`) serializes the supplied, already-signed fields
-    (it does not sign) -> {type, raw:'0x...', hash}. `fields` is an object; the
+    action=encode (needs `fields`) serializes the supplied fields (it does not
+    sign) -> {type, raw:'0x...', hash, signing_hash}. `fields` is an object; the
     type is taken from a `type` key or inferred from which fields are present
     (maxFeePerGas -> 1559, blobVersionedHashes -> 4844, accessList -> 2930, else
     legacy). Numbers accept int / decimal / 0x-hex; `to`/`data` are 0x-hex.
-    action=decode (needs `data`, a 0x-hex raw tx) -> {type, fields, hash, from},
-    recovering `from` from the signature; numeric fields come back as decimal
-    strings, addresses EIP-55 checksummed.
+    action=decode (needs `data`, a 0x-hex raw tx) -> {type, fields, hash,
+    signing_hash, from}, recovering `from` from the signature; numeric fields
+    come back as decimal strings, addresses EIP-55 checksummed.
+
+    `signing_hash` is the digest the sender signs: keccak256 of the payload
+    without the signature (typed: type_byte || rlp(fields minus yParity/r/s);
+    legacy EIP-155: rlp(fields[:6] + [chainId, 0, 0]); pre-EIP-155:
+    rlp(fields[:6])). `hash` is the tx hash, which covers the signature too, so
+    it is only meaningful once signed. To sign: encode the unsigned fields, sign
+    `signing_hash` with eth_sign, then encode again with r, s and yParity —
+    legacy instead takes v = chainId*2 + 35 + yParity (27 + yParity
+    pre-EIP-155).
 
     Example: eth_tx_codec("encode", fields={"nonce":0,"gasPrice":"0x09184e72a000",
     "gasLimit":"0x2710","to":"0x00..00","value":0,"data":"0x"}) -> type=0,
@@ -3441,6 +3491,8 @@ def eth_tx_codec(
             "type": tx_type,
             "raw": "0x" + raw.hex(),
             "hash": "0x" + _keccak256(raw).hex(),
+            # re-parsed so encode and decode can never disagree on what is signed
+            "signing_hash": _tx_decode("0x" + raw.hex())["signing_hash"],
         }
     if action == "decode":
         if not isinstance(data, str):
@@ -3734,7 +3786,8 @@ def eth_sign(
     This signs a raw digest — unlike the JSON-RPC `eth_sign`/`personal_sign`, it
     adds no "\\x19Ethereum Signed Message" prefix. Hash a message first with
     eth_hash (kind=eip191 for personal_sign, eip712 for typed data), or pass a
-    transaction's or user operation's signing hash.
+    transaction's signing hash (eth_tx_codec's `signing_hash`) or a user
+    operation's hash (eth_userop_hash).
 
     action=sign (message_hash, private_key_file) -> {signature (65-byte, v=27/28),
     r, s, v, yParity, eip2098, address}. The nonce is RFC 6979, so the result is

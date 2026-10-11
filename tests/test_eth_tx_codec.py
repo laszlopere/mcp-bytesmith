@@ -441,3 +441,128 @@ def test_registered_and_callable_through_app():
     contents = result.content
     payload = json.loads(contents[0].text)
     assert payload["from"] == LEGACY_SENDER
+
+
+# --- signing_hash: the digest the sender signs ------------------------------------
+# References from eth_account (serializable_unsigned_transaction_from_dict /
+# TypedTransaction .hash()); the EIP-155 one is also printed in the EIP itself.
+# The key is EIP-155's published example key (never use it for real funds).
+EIP155_KEY = "0x" + "46" * 32
+LEGACY_UNSIGNED = {
+    "nonce": 9,
+    "gasPrice": 20 * 10**9,
+    "gasLimit": 21000,
+    "to": "0x3535353535353535353535353535353535353535",
+    "value": 10**18,
+    "data": "0x",
+}
+EIP155_SIGHASH = "0xdaf5a779ae972f972197303d7b574746c7ef83eadac0f2791ad23db92e4c8e53"
+PRE155_SIGHASH = "0xf9e36c28c8cb35adba138005c02ab7aa7fbcd891f3139cb2eeed052a51cd2713"
+PRE155_RAW = (
+    "0xf86c098504a817c800825208943535353535353535353535353535353535353535"
+    "880de0b6b3a7640000801ba08383adc8b8ae116f918fb44ca7ff9dfd8012596a5c13"
+    "0c6246a2cc717ba41cdaa053ddfacf5bd4aa7e46d1575acf52636ea659b91f29e2fb"
+    "91c75567a279738f38"
+)
+TX1559_SIGHASH = "0x8da87285bbe2cbb9babecd4cf8ff952d61221aac6ad8c023d351cd8273681b13"
+TX1559_RAW_BY_EIP155_KEY = (
+    "0x02f8af01808310c8e08422c31a4283010c0b94a0b86991c6218b36c1d19d4a2e9eb0ce"
+    "3606eb4880b844a9059cbb000000000000000000000000c8ca2c90bcb6c088d5e03535a5"
+    "c9e17897eb53b600000000000000000000000000000000000000000000000000000000004c"
+    "b53dc001a0e949489aeb6cdf3a948e068a2643be194e422a48f3cdb8b20101990c6e0596"
+    "f8a01f33f3643299b055d564b14ec95f4968a6f0df5d3c6ac215afe1545c32e6c285"
+)
+
+
+def _unsigned_1559():
+    return {k: v for k, v in TX1559.items() if k not in ("yParity", "r", "s")}
+
+
+def test_eip155_signing_hash_unsigned_and_signed():
+    unsigned = eth_tx_codec("encode", fields={**LEGACY_UNSIGNED, "chainId": 1})
+    assert unsigned["signing_hash"] == EIP155_SIGHASH
+    # ...and the signed tx it becomes reports the same digest on both sides.
+    assert eth_tx_codec("decode", data=LEGACY_RAW)["signing_hash"] == EIP155_SIGHASH
+    signed = eth_tx_codec("decode", data=LEGACY_RAW)["fields"]
+    assert eth_tx_codec("encode", fields=signed)["signing_hash"] == EIP155_SIGHASH
+
+
+def test_unsigned_legacy_chain_id_goes_into_v():
+    out = eth_tx_codec("encode", fields={**LEGACY_UNSIGNED, "chainId": 369})
+    decoded = eth_tx_codec("decode", data=out["raw"])
+    assert decoded["fields"]["v"] == "369" and decoded["fields"]["chainId"] == "369"
+    assert decoded["signing_hash"] == out["signing_hash"]
+    assert decoded["from"] is None
+
+
+def test_pre_eip155_signing_hash():
+    assert eth_tx_codec("encode", fields=LEGACY_UNSIGNED)["signing_hash"] == (
+        PRE155_SIGHASH
+    )
+    decoded = eth_tx_codec("decode", data=PRE155_RAW)
+    assert decoded["signing_hash"] == PRE155_SIGHASH
+    assert "chainId" not in decoded["fields"]
+
+
+def test_1559_signing_hash_unsigned_and_signed():
+    assert eth_tx_codec("encode", fields=_unsigned_1559())["signing_hash"] == (
+        TX1559_SIGHASH
+    )
+    # The signature does not change what was signed.
+    assert eth_tx_codec("encode", fields=TX1559)["signing_hash"] == TX1559_SIGHASH
+    raw = eth_tx_codec("encode", fields=TX1559)["raw"]
+    assert eth_tx_codec("decode", data=raw)["signing_hash"] == TX1559_SIGHASH
+
+
+def test_signed_legacy_v_must_match_chain_id():
+    signed = eth_tx_codec("decode", data=LEGACY_RAW)["fields"]  # v=37 -> chain 1
+    with pytest.raises(ValueError, match="does not encode chainId 5"):
+        eth_tx_codec("encode", fields={**signed, "chainId": 5})
+    with pytest.raises(ValueError, match="does not encode chainId"):
+        eth_tx_codec("encode", fields={**signed, "v": 27})  # pre-155 v + chainId
+
+
+def test_unsigned_legacy_v_must_equal_chain_id():
+    with pytest.raises(ValueError, match="must be absent or equal chainId"):
+        eth_tx_codec("encode", fields={**LEGACY_UNSIGNED, "chainId": 1, "v": 2})
+
+
+# --- end to end: encode unsigned -> eth_sign -> encode signed --------------------
+@pytest.fixture
+def eip155_key_file(tmp_path):
+    f = tmp_path / "key"
+    f.write_text(EIP155_KEY)
+    return str(f)
+
+
+def test_sign_eip155_legacy_end_to_end(eip155_key_file):
+    from mcp_bytesmith.eth import eth_sign
+
+    fields = {**LEGACY_UNSIGNED, "chainId": 1}
+    digest = eth_tx_codec("encode", fields=fields)["signing_hash"]
+    sig = eth_sign("sign", message_hash=digest, private_key_file=eip155_key_file)
+    signed = {**fields, "v": 1 * 2 + 35 + sig["yParity"], "r": sig["r"], "s": sig["s"]}
+    out = eth_tx_codec("encode", fields=signed)
+    assert out["raw"] == LEGACY_RAW  # byte for byte the EIP-155 example tx
+    assert eth_tx_codec("decode", data=out["raw"])["from"] == LEGACY_SENDER
+
+
+def test_sign_pre_eip155_legacy_end_to_end(eip155_key_file):
+    from mcp_bytesmith.eth import eth_sign
+
+    digest = eth_tx_codec("encode", fields=LEGACY_UNSIGNED)["signing_hash"]
+    sig = eth_sign("sign", message_hash=digest, private_key_file=eip155_key_file)
+    signed = {**LEGACY_UNSIGNED, "v": sig["v"], "r": sig["r"], "s": sig["s"]}
+    assert eth_tx_codec("encode", fields=signed)["raw"] == PRE155_RAW
+
+
+def test_sign_1559_end_to_end(eip155_key_file):
+    from mcp_bytesmith.eth import eth_sign
+
+    fields = _unsigned_1559()
+    digest = eth_tx_codec("encode", fields=fields)["signing_hash"]
+    sig = eth_sign("sign", message_hash=digest, private_key_file=eip155_key_file)
+    signed = {**fields, "yParity": sig["yParity"], "r": sig["r"], "s": sig["s"]}
+    out = eth_tx_codec("encode", fields=signed)
+    assert out["raw"] == TX1559_RAW_BY_EIP155_KEY  # matches eth_account
+    assert eth_tx_codec("decode", data=out["raw"])["from"] == LEGACY_SENDER

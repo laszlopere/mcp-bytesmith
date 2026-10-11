@@ -179,8 +179,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   OpenZeppelin's ECDSA reject. EIP-155 transaction v values are refused with a
   pointer to `eth_tx_codec`. Pure Python on the existing curve code — still the
   `ethereum` extra.
+- `eth_tx_codec` reports `signing_hash`, the digest the sender signs, on both
+  encode and decode. Together with `eth_sign` that makes offline signing a
+  three-step loop: encode the unsigned fields, sign `signing_hash`, encode again
+  with r, s and yParity (legacy: v = chainId*2 + 35 + yParity). Encode derives
+  it by decoding its own output, so the two actions cannot disagree. `hash`
+  stays the transaction hash, which covers the signature and so is only
+  meaningful once signed.
 
 ### Changed
+- `eth_tx_codec` encode no longer ignores a legacy transaction's `chainId`. An
+  unsigned legacy tx (no r/s) puts it in v, EIP-155's unsigned form — the one
+  ethers serializes — and decode reads that form back as unsigned with that
+  chain id, so its signing hash is the EIP-155 one rather than the pre-EIP-155
+  one. A signed legacy tx whose v does not encode the given `chainId` is now
+  an error instead of silently producing a tx for another chain.
 - Runs on the MCP Python SDK 2.x (`mcp>=2.3.0,<3`), which replaced `FastMCP`
   with `MCPServer`; the mcp<2 cap is gone. Behaviour over stdio is unchanged:
   mangled `arguments` are still repaired, validation errors still name the

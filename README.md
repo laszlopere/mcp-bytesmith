@@ -53,7 +53,8 @@ into named event arguments, `eth_revert_decode` for turning a failed call's
 revert data into a reason (`Error(string)`, `Panic(uint256)`, or a custom error),
 `eth_bytecode` for disassembling deployed bytecode, scraping the selectors out of
 its dispatcher, and reading its trailing solc metadata,
-`eth_tx_codec` for transactions, `eth_storage_slot`
+`eth_tx_codec` for transactions and the hash their sender signs,
+`eth_storage_slot`
 for storage layout — mapping and array slots, plus the well-known constant ones
 (EIP-1967 proxy, UUPS, ERC-7201 namespaced, diamond) — `eth_address_case` for
 EIP-55 checksums, `ens_namehash` for
