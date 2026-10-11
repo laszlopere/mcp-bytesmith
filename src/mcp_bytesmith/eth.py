@@ -2759,12 +2759,12 @@ def eth_eoa_address(
     "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80") ->
     address="0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266".
     """
-    if (private_key is None) == (private_key_file is None):
-        raise ValueError("give exactly one of `private_key` or `private_key_file`")
-    if private_key_file is not None:
+    if private_key_file is not None and private_key is None:
         k = _private_key_from_file(private_key_file)
-    else:
+    elif private_key is not None and private_key_file is None:
         k = _private_key_scalar(private_key)
+    else:
+        raise ValueError("give exactly one of `private_key` or `private_key_file`")
     pubkey = _secp_pubkey_uncompressed(k)
     return {
         "address": _pubkey_address(pubkey[1:]),
@@ -3699,6 +3699,16 @@ def _sig_parse(signature: str | dict | None, action: str) -> tuple[int, int, int
     return r, s, parity
 
 
+def _sig_rsv(r: int, s: int, parity: int) -> dict:
+    """(r, s, y_parity) -> the rsv form {r, s, v, yParity}."""
+    return {
+        "r": "0x" + r.to_bytes(32, "big").hex(),
+        "s": "0x" + s.to_bytes(32, "big").hex(),
+        "v": 27 + parity,
+        "yParity": parity,
+    }
+
+
 def _sig_render(r: int, s: int, parity: int, fmt: str) -> str | dict:
     """(r, s, y_parity) -> one wire form."""
     if fmt == "packed65":
@@ -3719,12 +3729,7 @@ def _sig_render(r: int, s: int, parity: int, fmt: str) -> str | dict:
             + (parity << 255 | s).to_bytes(32, "big").hex()
         )
     if fmt == "rsv":
-        return {
-            "r": "0x" + r.to_bytes(32, "big").hex(),
-            "s": "0x" + s.to_bytes(32, "big").hex(),
-            "v": 27 + parity,
-            "yParity": parity,
-        }
+        return _sig_rsv(r, s, parity)
     raise ValueError(
         f"unknown signature_format {fmt!r}; expected rsv, packed65, or eip2098"
     )
@@ -3810,11 +3815,10 @@ def eth_sign(
         z = _sig_message_hash(message_hash, action)
         d = _private_key_from_file(private_key_file)
         r, s, parity = _secp_sign(d, z)
-        rsv = _sig_render(r, s, parity, "rsv")
         return {
             "action": action,
             "signature": _sig_render(r, s, parity, "packed65"),
-            **rsv,
+            **_sig_rsv(r, s, parity),
             "eip2098": _sig_render(r, s, parity, "eip2098"),
             "address": _pubkey_address(_secp_pubkey_uncompressed(d)[1:]),
         }
