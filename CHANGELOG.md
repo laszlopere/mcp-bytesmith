@@ -156,6 +156,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   It shares its ABI engine and value conventions with `abi_codec` (ints as
   decimal strings, addresses EIP-55 checksummed) and adds no dependency — still
   the `ethereum` extra.
+- `eth_eoa_address` takes the private key from a file: pass `private_key_file`
+  (a path; `~` is expanded) instead of `private_key`, and the server reads the
+  key itself, so it appears in neither the tool call nor its result. The file
+  holds the key as 64 hex digits (0x prefix and surrounding whitespace optional)
+  or as the 32 raw bytes. No error quotes the file's contents — a near-miss key
+  is still nearly the whole key — and files over 4 KiB are refused unread.
 
 ### Changed
 - Runs on the MCP Python SDK 2.x (`mcp>=2.3.0,<3`), which replaced `FastMCP`

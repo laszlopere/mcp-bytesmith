@@ -60,7 +60,8 @@ EIP-55 checksums, `ens_namehash` for
 EIP-137 ENS namehash/labelhash, `bip39` for BIP-39 mnemonic generation,
 validation, and seed derivation, `bip32_derive` for BIP-32/44 HD key and address
 derivation from a seed, `eth_eoa_address` for the address and public key behind a
-private key, and `eth_contract_address` for CREATE and CREATE2 deployment
+private key (passed inline, or read from a file so the key stays out of the
+conversation), and `eth_contract_address` for CREATE and CREATE2 deployment
 addresses. An always-available `info` tool reports which toolsets are active
 along with version information.
 

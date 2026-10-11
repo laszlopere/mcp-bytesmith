@@ -33,6 +33,7 @@ import json
 import secrets
 import unicodedata
 from importlib.resources import files
+from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from pydantic import Field
@@ -2675,6 +2676,46 @@ def _private_key_scalar(private_key: str) -> int:
     return k
 
 
+# Cap on a key file's size: a hex key with a 0x prefix and a trailing newline is
+# well under 100 bytes, so anything larger is the wrong file and not worth reading.
+_KEY_FILE_MAX = 4096
+
+
+def _private_key_from_file(path: str) -> int:
+    """Read a private key from a file, keeping its contents out of every message.
+
+    The file holds the key as hex text (0x prefix and surrounding whitespace
+    optional) or as the 32 raw bytes. Unlike _to_bytes, no error message quotes
+    what was read: a key with a one-character typo is still nearly the whole key.
+    """
+    p = Path(path).expanduser()
+    if not p.exists():
+        raise ValueError(f"private key file not found: {path}")
+    if not p.is_file():
+        raise ValueError(f"private key file is not a regular file: {path}")
+    if p.stat().st_size > _KEY_FILE_MAX:
+        raise ValueError(
+            f"private key file is larger than {_KEY_FILE_MAX} bytes: {path}"
+        )
+    raw = p.read_bytes()
+    try:
+        text = raw.decode("ascii").strip()
+    except UnicodeDecodeError:
+        text = ""  # not text, so only the 32-raw-bytes form can apply
+    body = text[2:] if text[:2].lower() == "0x" else text
+    if len(body) == 64 and all(c in "0123456789abcdefABCDEF" for c in body):
+        raw = bytes.fromhex(body)
+    if len(raw) != 32:
+        raise ValueError(
+            "private key file must hold a 32-byte key as 64 hex digits "
+            f"(0x optional) or as 32 raw bytes: {path}"
+        )
+    k = int.from_bytes(raw, "big")
+    if not 0 < k < _SECP_N:
+        raise ValueError("private key is out of the secp256k1 range (0 < k < n)")
+    return k
+
+
 # --- address derivation: EOA (§1.14.6) and contract (§1.14.1) ------------------
 # Both addresses are keccak tails, differing only in what gets hashed. An EOA's
 # is the last 20 bytes of keccak256 over the 64-byte public key body (X || Y),
@@ -2685,12 +2726,22 @@ def _private_key_scalar(private_key: str) -> int:
 # can be computed before the contract exists. Neither tool deploys anything.
 def eth_eoa_address(
     private_key: Annotated[
-        str,
+        str | None,
         Field(
             description="A 32-byte secp256k1 private key as hex (0x prefix optional). "
-            "Never echoed back in the result."
+            "Never echoed back in the result. Give this or `private_key_file`."
         ),
-    ],
+    ] = None,
+    private_key_file: Annotated[
+        str | None,
+        Field(
+            description="Path of a file holding the private key as 64 hex digits "
+            "(0x and surrounding whitespace optional) or as 32 raw bytes; `~` is "
+            "expanded. The server reads the file itself, so the key appears in "
+            "neither the call nor the result, and no error quotes the file's "
+            "contents. Give this or `private_key`."
+        ),
+    ] = None,
 ) -> dict:
     """Derive an EOA's Ethereum address and public key from its private key.
 
@@ -2700,11 +2751,20 @@ def eth_eoa_address(
     derives, it does not create an account. Returns {address, public_key}; the
     private key is never echoed back.
 
+    Exactly one of `private_key` (inline hex) or `private_key_file` (a path the
+    server reads, which keeps the key out of the conversation) is required.
+
     Example: eth_eoa_address(
     "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80") ->
     address="0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266".
     """
-    pubkey = _secp_pubkey_uncompressed(_private_key_scalar(private_key))
+    if (private_key is None) == (private_key_file is None):
+        raise ValueError("give exactly one of `private_key` or `private_key_file`")
+    if private_key_file is not None:
+        k = _private_key_from_file(private_key_file)
+    else:
+        k = _private_key_scalar(private_key)
+    pubkey = _secp_pubkey_uncompressed(k)
     return {
         "address": _pubkey_address(pubkey[1:]),
         "public_key": "0x" + pubkey.hex(),

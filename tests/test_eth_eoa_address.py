@@ -154,3 +154,104 @@ def test_callable_through_app():
     contents = result.content
     payload = json.loads(contents[0].text)
     assert payload["address"] == ANVIL_ACCOUNTS[0][1]
+
+
+# --- private_key_file: the key is read server-side, never seen by the caller ----
+@pytest.mark.parametrize(
+    "content",
+    [
+        ANVIL_ACCOUNTS[1][0],  # 0x-prefixed hex
+        ANVIL_ACCOUNTS[1][0][2:],  # bare hex
+        ANVIL_ACCOUNTS[1][0] + "\n",  # trailing newline, as `echo > file` leaves
+        "  " + ANVIL_ACCOUNTS[1][0].upper().replace("0X", "0x") + "\r\n",
+    ],
+)
+def test_key_file_hex_forms(tmp_path, content):
+    f = tmp_path / "key"
+    f.write_text(content)
+    assert eth_eoa_address(private_key_file=str(f))["address"] == ANVIL_ACCOUNTS[1][1]
+
+
+def test_key_file_raw_bytes(tmp_path):
+    f = tmp_path / "key.bin"
+    f.write_bytes(bytes.fromhex(ANVIL_ACCOUNTS[2][0][2:]))
+    assert eth_eoa_address(private_key_file=str(f))["address"] == ANVIL_ACCOUNTS[2][1]
+
+
+def test_key_file_matches_inline_key(tmp_path):
+    f = tmp_path / "key"
+    f.write_text(ANVIL_ACCOUNTS[0][0])
+    assert eth_eoa_address(private_key_file=str(f)) == eth_eoa_address(
+        ANVIL_ACCOUNTS[0][0]
+    )
+
+
+def test_key_file_tilde_expanded(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / "key").write_text(ANVIL_ACCOUNTS[0][0])
+    assert eth_eoa_address(private_key_file="~/key")["address"] == ANVIL_ACCOUNTS[0][1]
+
+
+def test_exactly_one_key_source_required(tmp_path):
+    f = tmp_path / "key"
+    f.write_text(ANVIL_ACCOUNTS[0][0])
+    with pytest.raises(ValueError, match="exactly one"):
+        eth_eoa_address()
+    with pytest.raises(ValueError, match="exactly one"):
+        eth_eoa_address(ANVIL_ACCOUNTS[0][0], private_key_file=str(f))
+
+
+def test_key_file_missing(tmp_path):
+    with pytest.raises(ValueError, match="not found"):
+        eth_eoa_address(private_key_file=str(tmp_path / "nope"))
+
+
+def test_key_file_is_a_directory(tmp_path):
+    with pytest.raises(ValueError, match="not a regular file"):
+        eth_eoa_address(private_key_file=str(tmp_path))
+
+
+def test_key_file_too_large(tmp_path):
+    f = tmp_path / "big"
+    f.write_text("0" * 5000)
+    with pytest.raises(ValueError, match="larger than"):
+        eth_eoa_address(private_key_file=str(f))
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        ANVIL_ACCOUNTS[0][0][:-1],  # one hex digit short
+        ANVIL_ACCOUNTS[0][0][:-1] + "z",  # a typo'd digit
+        ANVIL_ACCOUNTS[0][0] + "00",  # one byte too many
+    ],
+)
+def test_key_file_malformed_error_does_not_quote_contents(tmp_path, content):
+    # A near-miss key is still nearly the whole key, so the error must not quote it
+    # (the inline path's hex parser does, which is fine there: the caller sent it).
+    f = tmp_path / "key"
+    f.write_text(content)
+    with pytest.raises(ValueError) as exc:
+        eth_eoa_address(private_key_file=str(f))
+    message = str(exc.value)
+    assert "32-byte key" in message
+    assert ANVIL_ACCOUNTS[0][0][2:20] not in message.lower()
+
+
+def test_key_file_out_of_range(tmp_path):
+    f = tmp_path / "key"
+    f.write_text("00" * 32)
+    with pytest.raises(ValueError, match="secp256k1 range"):
+        eth_eoa_address(private_key_file=str(f))
+
+
+def test_key_file_through_app(tmp_path):
+    f = tmp_path / "key"
+    f.write_text(ANVIL_ACCOUNTS[0][0] + "\n")
+
+    async def go():
+        return await mcp.call_tool("eth_eoa_address", {"private_key_file": str(f)})
+
+    text = asyncio.run(go()).content[0].text
+    assert json.loads(text)["address"] == ANVIL_ACCOUNTS[0][1]
+    assert ANVIL_ACCOUNTS[0][0][2:] not in text
